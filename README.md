@@ -1,5 +1,20 @@
 # ShineCraft App
 
+## Kết nối API mobile
+
+App mặc định gọi `http://10.0.2.2:3000/api` trên Android emulator và
+`http://localhost:3000/api` trên iOS simulator/web.
+
+Khi chạy trên điện thoại thật, tạo `.env` từ `.env.example`, thay IP bằng địa chỉ LAN của máy chạy
+`shinecraft-server`, và bảo đảm hai thiết bị dùng cùng mạng Wi-Fi:
+
+```env
+EXPO_PUBLIC_API_URL=http://192.168.1.10:3000/api
+```
+
+Token được lưu bằng `expo-secure-store`. Khi mở app hoặc đưa app về foreground, `/auth/me` được gọi
+để kiểm tra phiên; token hết hạn hoặc không hợp lệ sẽ bị xóa và app quay về màn hình đăng nhập.
+
 Ứng dụng đa nền tảng được xây dựng bằng Expo SDK 56, React Native và
 TypeScript. Dự án sử dụng Expo Router để quản lý điều hướng theo cấu trúc
 file, đồng thời tổ chức mã nguồn theo từng tính năng để dễ phát triển, kiểm
@@ -289,4 +304,3 @@ thay vì cài tùy ý bằng `npm install`.
 - [Expo Router](https://docs.expo.dev/versions/v56.0.0/router/introduction/)
 - [Cấu hình ứng dụng Expo](https://docs.expo.dev/versions/v56.0.0/config/app/)
 - [React Native](https://reactnative.dev/)
-
