@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,18 +15,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Screen } from '@/components/screen';
 import { colors } from '@/constants/shinecraft-theme';
-import {
-  type Appointment,
-  type AppointmentStatus,
-  bookingServices,
-  bookingVehicles,
-  createBookingDates,
-  formatCurrency,
-  formatDuration,
-  initialAppointments,
-  serviceCategories,
-  timeSlots,
-} from '@/features/booking/data/mock-booking';
+import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
+import { ApiError, appointmentsApi, servicesApi, vehiclesApi } from '@/lib/api';
+import type {
+  Appointment,
+  AppointmentStatus,
+  CreateAppointmentInput,
+  Service,
+  Vehicle,
+} from '@/types';
+
+const timeSlots = ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00'];
 
 const statusConfig: Record<AppointmentStatus, { label: string; color: string; background: string }> = {
   pending: { label: 'Chờ xác nhận', color: colors.warning, background: '#fffaeb' },
@@ -34,10 +35,101 @@ const statusConfig: Record<AppointmentStatus, { label: string; color: string; ba
   cancelled: { label: 'Đã hủy', color: colors.danger, background: '#fef3f2' },
 };
 
+function createBookingDates(count = 14) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() + index + 1);
+
+    return {
+      value: [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-'),
+      weekday: date.toLocaleDateString('vi-VN', { weekday: 'short' }),
+      day: String(date.getDate()).padStart(2, '0'),
+      month: `Th${date.getMonth() + 1}`,
+    };
+  });
+}
+
+function formatCurrency(value: number) {
+  return `${value.toLocaleString('vi-VN')} đ`;
+}
+
+function formatDuration(minutes: number) {
+  if (minutes < 60) return `${minutes} phút`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} giờ ${remaining} phút` : `${hours} giờ`;
+}
+
 export default function AppointmentsScreen() {
-  const [appointments, setAppointments] = useState(initialAppointments);
+  const { user, validateSession } = useAuth();
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [bookingVisible, setBookingVisible] = useState(false);
+  const [cancelAppointment, setCancelAppointment] = useState<Appointment | null>(null);
   const [filter, setFilter] = useState<'upcoming' | 'history'>('upcoming');
+
+  const handleError = useCallback(
+    async (error: unknown, title: string) => {
+      if (error instanceof ApiError && error.status === 401) {
+        await validateSession();
+        return;
+      }
+      Alert.alert(title, getApiErrorMessage(error));
+    },
+    [validateSession],
+  );
+
+  const loadAppointments = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      try {
+        setAppointments(await appointmentsApi.listMine());
+      } catch (error) {
+        await handleError(error, 'Không tải được lịch hẹn');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [handleError],
+  );
+
+  const loadBookingOptions = useCallback(async () => {
+    if (!user) return;
+    setOptionsLoading(true);
+    try {
+      const [nextVehicles, nextServices] = await Promise.all([
+        vehiclesApi.list(user.role),
+        servicesApi.listActive(),
+      ]);
+      setVehicles(nextVehicles);
+      setServices(nextServices);
+    } catch (error) {
+      await handleError(error, 'Không tải được dữ liệu đặt lịch');
+    } finally {
+      setOptionsLoading(false);
+    }
+  }, [handleError, user]);
+
+  useEffect(() => {
+    const task = Promise.resolve().then(() =>
+      Promise.all([loadAppointments(), loadBookingOptions()]),
+    );
+    return () => {
+      void task;
+    };
+  }, [loadAppointments, loadBookingOptions]);
 
   const filteredAppointments = useMemo(
     () =>
@@ -49,33 +141,74 @@ export default function AppointmentsScreen() {
     [appointments, filter],
   );
 
-  const addAppointment = (appointment: Appointment) => {
-    setAppointments((current) => [appointment, ...current]);
-    setBookingVisible(false);
-    Alert.alert('Đặt lịch thành công', 'Lịch hẹn đang chờ gara xác nhận.');
+  const openBooking = async () => {
+    if (!vehicles.length || !services.length) {
+      await loadBookingOptions();
+    }
+    setBookingVisible(true);
+  };
+
+  const createAppointment = async (input: CreateAppointmentInput) => {
+    setSaving(true);
+    try {
+      const created = await appointmentsApi.create(input);
+      setAppointments((current) => [created, ...current]);
+      setBookingVisible(false);
+      Alert.alert('Đặt lịch thành công', 'Lịch hẹn đang chờ gara xác nhận.');
+    } catch (error) {
+      await handleError(error, 'Không thể đặt lịch');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmCancel = async (reason?: string) => {
+    if (!cancelAppointment) return;
+    setCancelling(true);
+    try {
+      const updated = await appointmentsApi.cancelMine(cancelAppointment._id, reason);
+      setAppointments((current) =>
+        current.map((appointment) => (appointment._id === updated._id ? updated : appointment)),
+      );
+      setCancelAppointment(null);
+      Alert.alert('Đã hủy lịch hẹn');
+    } catch (error) {
+      await handleError(error, 'Không thể hủy lịch hẹn');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   return (
     <>
-      <Screen>
+      <Screen
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              void Promise.all([loadAppointments(true), loadBookingOptions()]);
+            }}
+          />
+        }>
         <View style={styles.header}>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>SHINECRAFT BOOKING</Text>
             <Text style={styles.title}>Lịch hẹn của bạn</Text>
             <Text style={styles.subtitle}>Đặt dịch vụ và theo dõi tiến độ chăm sóc xe.</Text>
           </View>
-          <Pressable onPress={() => setBookingVisible(true)} style={styles.addButton}>
+          <Pressable onPress={() => void openBooking()} style={styles.addButton}>
             <Text style={styles.addButtonIcon}>+</Text>
           </Pressable>
         </View>
 
-        <Pressable onPress={() => setBookingVisible(true)} style={styles.bookingBanner}>
+        <Pressable onPress={() => void openBooking()} style={styles.bookingBanner}>
           <View style={styles.bannerIcon}>
             <Text style={styles.bannerIconText}>SC</Text>
           </View>
           <View style={styles.bannerCopy}>
             <Text style={styles.bannerTitle}>Đặt lịch chăm sóc xe</Text>
-            <Text style={styles.bannerText}>Chọn dịch vụ và khung giờ phù hợp trong vài bước.</Text>
+            <Text style={styles.bannerText}>Chọn xe, nhiều dịch vụ và thời gian phù hợp.</Text>
           </View>
           <Text style={styles.bannerArrow}>›</Text>
         </Pressable>
@@ -110,293 +243,354 @@ export default function AppointmentsScreen() {
           ))}
         </View>
 
-        {filteredAppointments.length ? (
+        {loading ? (
+          <ActivityIndicator color={colors.primary} size="large" style={styles.loader} />
+        ) : filteredAppointments.length ? (
           filteredAppointments.map((appointment) => (
-            <AppointmentCard key={appointment._id} appointment={appointment} />
+            <AppointmentCard
+              key={appointment._id}
+              appointment={appointment}
+              onCancel={setCancelAppointment}
+            />
           ))
         ) : (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Chưa có lịch hẹn</Text>
-            <Text style={styles.emptyText}>Các lịch hẹn {filter === 'history' ? 'đã hoàn tất' : 'sắp tới'} sẽ xuất hiện tại đây.</Text>
+            <Text style={styles.emptyText}>
+              Các lịch hẹn {filter === 'history' ? 'đã hoàn tất' : 'sắp tới'} sẽ xuất hiện tại đây.
+            </Text>
           </View>
         )}
       </Screen>
 
-      <BookingModal
-        visible={bookingVisible}
-        onClose={() => setBookingVisible(false)}
-        onComplete={addAppointment}
-      />
+      {bookingVisible ? (
+        <BookingModal
+          vehicles={vehicles}
+          services={services}
+          loading={optionsLoading}
+          saving={saving}
+          onClose={() => setBookingVisible(false)}
+          onSubmit={createAppointment}
+          onRetry={loadBookingOptions}
+        />
+      ) : null}
+
+      {cancelAppointment ? (
+        <CancelAppointmentModal
+          appointment={cancelAppointment}
+          saving={cancelling}
+          onClose={() => setCancelAppointment(null)}
+          onConfirm={confirmCancel}
+        />
+      ) : null}
     </>
   );
 }
 
-function AppointmentCard({ appointment }: { appointment: Appointment }) {
-  const vehicle = bookingVehicles.find((item) => item._id === appointment.vehicleId);
-  const services = bookingServices.filter((item) => appointment.serviceIds.includes(item._id));
+function AppointmentCard({
+  appointment,
+  onCancel,
+}: {
+  appointment: Appointment;
+  onCancel: (appointment: Appointment) => void;
+}) {
   const status = statusConfig[appointment.status];
-  const date = new Date(`${appointment.appointmentDate}T00:00:00`);
+  const canCancel = appointment.status === 'pending' || appointment.status === 'confirmed';
+  const scheduledAt = new Date(appointment.scheduledAt);
 
   return (
     <View style={styles.card}>
       <View style={styles.cardTop}>
-        <Text style={styles.code}>{appointment.code}</Text>
+        <Text style={styles.code}>#{appointment._id.slice(-8).toUpperCase()}</Text>
         <View style={[styles.badge, { backgroundColor: status.background }]}>
           <Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text>
         </View>
       </View>
-      <Text style={styles.serviceName}>{services.map((item) => item.name).join(', ')}</Text>
+      <Text style={styles.serviceName}>
+        {appointment.services.map((item) => item.nameSnapshot).join(', ')}
+      </Text>
       <Text style={styles.vehicleText}>
-        {vehicle?.name} · {vehicle?.licensePlate}
+        {appointment.vehicleId.brand} {appointment.vehicleId.model} ·{' '}
+        {appointment.vehicleId.licensePlate}
       </Text>
       <View style={styles.scheduleRow}>
-        <View>
+        <View style={styles.scheduleCopy}>
           <Text style={styles.metaLabel}>THỜI GIAN</Text>
           <Text style={styles.metaValue}>
-            {date.toLocaleDateString('vi-VN')} · {appointment.timeSlot}
+            {scheduledAt.toLocaleDateString('vi-VN')} ·{' '}
+            {scheduledAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+          <Text style={styles.durationText}>
+            Dự kiến {formatDuration(appointment.totalEstimatedDuration)}
           </Text>
         </View>
         <View style={styles.priceWrap}>
           <Text style={styles.metaLabel}>TẠM TÍNH</Text>
-          <Text style={styles.price}>{formatCurrency(appointment.totalEstimatedPrice)}</Text>
+          <Text style={styles.price}>{formatCurrency(appointment.totalPrice)}</Text>
         </View>
       </View>
+      {appointment.note ? <Text style={styles.appointmentNote}>{appointment.note}</Text> : null}
+      {canCancel ? (
+        <Pressable onPress={() => onCancel(appointment)} style={styles.cancelButton}>
+          <Text style={styles.cancelButtonText}>Hủy lịch</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 function BookingModal({
-  visible,
+  vehicles,
+  services,
+  loading,
+  saving,
   onClose,
-  onComplete,
+  onSubmit,
+  onRetry,
 }: {
-  visible: boolean;
+  vehicles: Vehicle[];
+  services: Service[];
+  loading: boolean;
+  saving: boolean;
   onClose: () => void;
-  onComplete: (appointment: Appointment) => void;
+  onSubmit: (input: CreateAppointmentInput) => Promise<void>;
+  onRetry: () => Promise<void>;
 }) {
   const dates = useMemo(() => createBookingDates(), []);
-  const [step, setStep] = useState(1);
-  const [categoryId, setCategoryId] = useState(serviceCategories[0]._id);
-  const [serviceId, setServiceId] = useState('');
-  const [vehicleId, setVehicleId] = useState(bookingVehicles[0]._id);
-  const [appointmentDate, setAppointmentDate] = useState(dates[0].value);
-  const [timeSlot, setTimeSlot] = useState('');
+  const [vehicleId, setVehicleId] = useState('');
+  const [serviceIds, setServiceIds] = useState<string[]>([]);
+  const [scheduledDate, setScheduledDate] = useState(dates[0].value);
+  const [scheduledTime, setScheduledTime] = useState('09:00');
   const [note, setNote] = useState('');
 
-  const service = bookingServices.find((item) => item._id === serviceId);
-  const vehicle = bookingVehicles.find((item) => item._id === vehicleId);
-  const servicesByCategory = bookingServices.filter(
-    (item) => item.categoryId === categoryId && item.isActive,
+  const selectedVehicle = vehicles.find((vehicle) => vehicle._id === vehicleId);
+  const filteredServices = selectedVehicle
+    ? services.filter((service) => service.vehicleType === selectedVehicle.type)
+    : [];
+  const selectedServices = services.filter((service) => serviceIds.includes(service._id));
+  const totalPrice = selectedServices.reduce((total, service) => total + service.price, 0);
+  const totalDuration = selectedServices.reduce(
+    (total, service) => total + service.estimatedDuration,
+    0,
   );
 
-  const resetAndClose = () => {
-    setStep(1);
-    setServiceId('');
-    setTimeSlot('');
-    setNote('');
-    onClose();
+  const selectVehicle = (nextVehicleId: string) => {
+    const nextVehicle = vehicles.find((vehicle) => vehicle._id === nextVehicleId);
+    setVehicleId(nextVehicleId);
+    setServiceIds((current) =>
+      current.filter((serviceId) => {
+        const service = services.find((item) => item._id === serviceId);
+        return service?.vehicleType === nextVehicle?.type;
+      }),
+    );
   };
 
-  const next = () => {
-    if (step === 1 && !serviceId) {
-      Alert.alert('Chọn dịch vụ', 'Bạn cần chọn một dịch vụ để tiếp tục.');
-      return;
-    }
-    if (step === 3 && !timeSlot) {
-      Alert.alert('Chọn khung giờ', 'Bạn cần chọn một khung giờ còn trống.');
-      return;
-    }
-    setStep((current) => Math.min(current + 1, 4));
+  const toggleService = (serviceId: string) => {
+    setServiceIds((current) =>
+      current.includes(serviceId)
+        ? current.filter((item) => item !== serviceId)
+        : [...current, serviceId],
+    );
   };
 
-  const complete = () => {
-    if (!service) return;
-    const bookingKey = `${appointmentDate.replaceAll('-', '')}-${timeSlot.replace(':', '')}-${vehicleId}`;
-    onComplete({
-      _id: `appointment-${bookingKey}`,
-      code: `SC-${appointmentDate.slice(2).replaceAll('-', '')}-${timeSlot.replace(':', '')}`,
-      customerId: 'customer-demo',
+  const submit = () => {
+    if (!vehicleId) {
+      Alert.alert('Chọn xe', 'Vui lòng chọn xe của bạn.');
+      return;
+    }
+    if (!serviceIds.length) {
+      Alert.alert('Chọn dịch vụ', 'Vui lòng chọn ít nhất một dịch vụ.');
+      return;
+    }
+
+    const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}:00`);
+    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+      Alert.alert('Thời gian không hợp lệ', 'Thời gian hẹn phải ở trong tương lai.');
+      return;
+    }
+
+    void onSubmit({
       vehicleId,
-      serviceIds: [service._id],
-      appointmentDate,
-      timeSlot,
-      scheduledAt: `${appointmentDate}T${timeSlot}:00+07:00`,
-      status: 'pending',
+      services: serviceIds.map((serviceId) => ({ serviceId })),
+      scheduledAt: scheduledAt.toISOString(),
       note: note.trim() || undefined,
-      totalEstimatedPrice: service.price,
-      totalDurationMinutes: service.durationMinutes,
     });
-    setStep(1);
-    setServiceId('');
-    setTimeSlot('');
-    setNote('');
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={resetAndClose}>
+    <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.modalSafe}>
         <View style={styles.modalHeader}>
-          <Pressable onPress={step === 1 ? resetAndClose : () => setStep((value) => value - 1)}>
-            <Text style={styles.backText}>{step === 1 ? 'Đóng' : '‹ Quay lại'}</Text>
+          <View>
+            <Text style={styles.modalTitle}>Đặt lịch mới</Text>
+            <Text style={styles.modalSubtitle}>Chọn xe, dịch vụ và thời gian phù hợp.</Text>
+          </View>
+          <Pressable disabled={saving} onPress={onClose}>
+            <Text style={styles.closeText}>Đóng</Text>
           </Pressable>
-          <Text style={styles.modalHeaderTitle}>Đặt lịch dịch vụ</Text>
-          <Text style={styles.stepCount}>{step}/4</Text>
-        </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${step * 25}%` }]} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.modalContent}>
-          {step === 1 ? (
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.modalContent}>
+          {loading ? (
+            <ActivityIndicator color={colors.primary} size="large" style={styles.modalLoader} />
+          ) : !vehicles.length || !services.length ? (
+            <View style={styles.optionError}>
+              <Text style={styles.optionErrorTitle}>Không có dữ liệu đặt lịch</Text>
+              <Text style={styles.optionErrorText}>
+                Bạn cần có ít nhất một xe và hệ thống cần có dịch vụ đang hoạt động.
+              </Text>
+              <Pressable onPress={() => void onRetry()} style={styles.retryButton}>
+                <Text style={styles.retryText}>Tải lại</Text>
+              </Pressable>
+            </View>
+          ) : (
             <>
-              <StepTitle title="Chọn dịch vụ" caption="Bạn muốn chăm sóc xe theo cách nào?" />
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
-                {serviceCategories.map((category) => (
-                  <Pressable
-                    key={category._id}
-                    onPress={() => {
-                      setCategoryId(category._id);
-                      setServiceId('');
-                    }}
-                    style={[styles.categoryChip, categoryId === category._id && styles.categoryChipActive]}>
-                    <Text style={[styles.categoryText, categoryId === category._id && styles.categoryTextActive]}>
-                      {category.name}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              {servicesByCategory.map((item) => (
-                <Pressable
-                  key={item._id}
-                  onPress={() => setServiceId(item._id)}
-                  style={[styles.selectCard, serviceId === item._id && styles.selectCardActive]}>
-                  <View style={styles.selectCopy}>
-                    <Text style={styles.selectTitle}>{item.name}</Text>
-                    <Text style={styles.selectDescription}>{item.description}</Text>
-                    <Text style={styles.duration}>{formatDuration(item.durationMinutes)}</Text>
-                  </View>
-                  <View style={styles.selectRight}>
-                    <Text style={styles.selectPrice}>{formatCurrency(item.price)}</Text>
-                    <View style={[styles.radio, serviceId === item._id && styles.radioActive]}>
-                      {serviceId === item._id ? <View style={styles.radioDot} /> : null}
-                    </View>
-                  </View>
-                </Pressable>
-              ))}
-            </>
-          ) : null}
-
-          {step === 2 ? (
-            <>
-              <StepTitle title="Chọn xe" caption="Dịch vụ này sẽ được thực hiện cho xe nào?" />
-              {bookingVehicles.map((item) => (
-                <Pressable
-                  key={item._id}
-                  onPress={() => setVehicleId(item._id)}
-                  style={[styles.vehicleCard, vehicleId === item._id && styles.selectCardActive]}>
-                  <View style={styles.vehicleMark}>
-                    <Text style={styles.vehicleMarkText}>{item.type === 'car' ? 'CAR' : 'BIKE'}</Text>
-                  </View>
-                  <View style={styles.selectCopy}>
-                    <Text style={styles.selectTitle}>{item.name}</Text>
-                    <Text style={styles.selectDescription}>{item.licensePlate}</Text>
-                  </View>
-                  <View style={[styles.radio, vehicleId === item._id && styles.radioActive]}>
-                    {vehicleId === item._id ? <View style={styles.radioDot} /> : null}
-                  </View>
-                </Pressable>
-              ))}
-            </>
-          ) : null}
-
-          {step === 3 ? (
-            <>
-              <StepTitle title="Chọn thời gian" caption="Các khung giờ hiển thị đang còn chỗ." />
-              <Text style={styles.fieldTitle}>Ngày hẹn</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateRow}>
-                {dates.map((date) => (
-                  <Pressable
-                    key={date.value}
-                    onPress={() => setAppointmentDate(date.value)}
-                    style={[styles.dateCard, appointmentDate === date.value && styles.dateCardActive]}>
-                    <Text style={[styles.dateWeekday, appointmentDate === date.value && styles.dateTextActive]}>
-                      {date.weekday}
-                    </Text>
-                    <Text style={[styles.dateDay, appointmentDate === date.value && styles.dateTextActive]}>
-                      {date.day}
-                    </Text>
-                    <Text style={[styles.dateMonth, appointmentDate === date.value && styles.dateTextActive]}>
-                      {date.month}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-              <Text style={styles.fieldTitle}>Khung giờ</Text>
-              <View style={styles.slotGrid}>
-                {timeSlots.map((slot, index) => {
-                  const unavailable = index === 2 || (appointmentDate === dates[0].value && index === 4);
+              <FormSection
+                title="1. Chọn xe"
+                caption="Dịch vụ sẽ được lọc theo loại xe bạn chọn.">
+                {vehicles.map((vehicle) => {
+                  const selected = vehicleId === vehicle._id;
                   return (
                     <Pressable
-                      key={slot}
-                      disabled={unavailable}
-                      onPress={() => setTimeSlot(slot)}
-                      style={[
-                        styles.slot,
-                        timeSlot === slot && styles.slotActive,
-                        unavailable && styles.slotDisabled,
-                      ]}>
-                      <Text
-                        style={[
-                          styles.slotText,
-                          timeSlot === slot && styles.slotTextActive,
-                          unavailable && styles.slotTextDisabled,
-                        ]}>
-                        {slot}
-                      </Text>
+                      key={vehicle._id}
+                      onPress={() => selectVehicle(vehicle._id)}
+                      style={[styles.selectCard, selected && styles.selectCardActive]}>
+                      <View style={styles.vehicleMark}>
+                        <Text style={styles.vehicleMarkText}>
+                          {vehicle.type === 'car' ? 'CAR' : vehicle.type === 'motorbike' ? 'BIKE' : 'OTHER'}
+                        </Text>
+                      </View>
+                      <View style={styles.selectCopy}>
+                        <Text style={styles.selectTitle}>
+                          {vehicle.brand} {vehicle.model}
+                        </Text>
+                        <Text style={styles.selectDescription}>
+                          {vehicle.year} · {vehicle.licensePlate}
+                        </Text>
+                      </View>
+                      <SelectionMark selected={selected} />
                     </Pressable>
                   );
                 })}
-              </View>
-            </>
-          ) : null}
+              </FormSection>
 
-          {step === 4 && service ? (
-            <>
-              <StepTitle title="Xác nhận lịch hẹn" caption="Kiểm tra thông tin trước khi gửi yêu cầu." />
-              <View style={styles.summaryCard}>
-                <SummaryRow label="Dịch vụ" value={service.name} />
-                <SummaryRow label="Xe" value={`${vehicle?.name} · ${vehicle?.licensePlate}`} />
-                <SummaryRow
-                  label="Thời gian"
-                  value={`${new Date(`${appointmentDate}T00:00:00`).toLocaleDateString('vi-VN')} · ${timeSlot}`}
-                />
-                <SummaryRow label="Thời lượng" value={formatDuration(service.durationMinutes)} />
-                <View style={styles.summaryDivider} />
-                <SummaryRow label="Tạm tính" value={formatCurrency(service.price)} strong />
-              </View>
-              <View>
-                <Text style={styles.fieldTitle}>Ghi chú cho gara</Text>
+              <FormSection
+                title="2. Chọn dịch vụ"
+                caption="Bạn có thể chọn nhiều dịch vụ trong cùng một lịch hẹn.">
+                {!selectedVehicle ? (
+                  <Text style={styles.helperBox}>Hãy chọn xe trước để xem dịch vụ phù hợp.</Text>
+                ) : !filteredServices.length ? (
+                  <Text style={styles.helperBox}>Chưa có dịch vụ phù hợp với loại xe này.</Text>
+                ) : (
+                  filteredServices.map((service) => {
+                    const selected = serviceIds.includes(service._id);
+                    return (
+                      <Pressable
+                        key={service._id}
+                        onPress={() => toggleService(service._id)}
+                        style={[styles.serviceCard, selected && styles.selectCardActive]}>
+                        <View style={styles.selectCopy}>
+                          <Text style={styles.selectTitle}>{service.name}</Text>
+                          <Text style={styles.selectDescription}>
+                            {service.description?.trim() || 'Dịch vụ chăm sóc xe tiêu chuẩn'}
+                          </Text>
+                          <Text style={styles.serviceMeta}>
+                            {formatDuration(service.estimatedDuration)} ·{' '}
+                            {formatCurrency(service.price)}
+                          </Text>
+                        </View>
+                        <SelectionMark selected={selected} multiple />
+                      </Pressable>
+                    );
+                  })
+                )}
+              </FormSection>
+
+              <FormSection title="3. Chọn thời gian" caption="Thời gian hẹn phải ở trong tương lai.">
+                <Text style={styles.fieldTitle}>Ngày hẹn</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.dateRow}>
+                  {dates.map((date) => {
+                    const selected = scheduledDate === date.value;
+                    return (
+                      <Pressable
+                        key={date.value}
+                        onPress={() => setScheduledDate(date.value)}
+                        style={[styles.dateCard, selected && styles.dateCardActive]}>
+                        <Text style={[styles.dateWeekday, selected && styles.dateTextActive]}>
+                          {date.weekday}
+                        </Text>
+                        <Text style={[styles.dateDay, selected && styles.dateTextActive]}>
+                          {date.day}
+                        </Text>
+                        <Text style={[styles.dateMonth, selected && styles.dateTextActive]}>
+                          {date.month}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                <Text style={styles.fieldTitle}>Giờ hẹn</Text>
+                <View style={styles.slotGrid}>
+                  {timeSlots.map((slot) => {
+                    const selected = scheduledTime === slot;
+                    return (
+                      <Pressable
+                        key={slot}
+                        onPress={() => setScheduledTime(slot)}
+                        style={[styles.slot, selected && styles.slotActive]}>
+                        <Text style={[styles.slotText, selected && styles.slotTextActive]}>
+                          {slot}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </FormSection>
+
+              <FormSection title="4. Ghi chú" caption="Thông tin này không bắt buộc.">
                 <TextInput
                   value={note}
                   onChangeText={setNote}
-                  placeholder="Ví dụ: kiểm tra thêm vết xước cửa bên phải..."
+                  placeholder="Ví dụ: cần kiểm tra thêm nội thất..."
                   placeholderTextColor="#98a2b3"
                   multiline
+                  maxLength={1000}
                   style={styles.noteInput}
                 />
-              </View>
-              <View style={styles.policy}>
-                <Text style={styles.policyText}>
-                  Gara sẽ liên hệ xác nhận. Giá cuối cùng có thể thay đổi sau khi kiểm tra xe.
-                </Text>
-              </View>
+              </FormSection>
+
+              {selectedServices.length ? (
+                <View style={styles.summaryCard}>
+                  <SummaryRow label="Xe" value={`${selectedVehicle?.brand} ${selectedVehicle?.model}`} />
+                  <SummaryRow label="Số dịch vụ" value={String(selectedServices.length)} />
+                  <SummaryRow label="Thời lượng" value={formatDuration(totalDuration)} />
+                  <View style={styles.summaryDivider} />
+                  <SummaryRow label="Tạm tính" value={formatCurrency(totalPrice)} strong />
+                </View>
+              ) : null}
             </>
-          ) : null}
+          )}
         </ScrollView>
 
         <View style={styles.footer}>
-          <Pressable onPress={step === 4 ? complete : next} style={styles.continueButton}>
-            <Text style={styles.continueText}>{step === 4 ? 'Xác nhận đặt lịch' : 'Tiếp tục'}</Text>
+          <Pressable
+            disabled={saving || loading || !vehicles.length || !services.length}
+            onPress={submit}
+            style={[
+              styles.continueButton,
+              (saving || loading || !vehicles.length || !services.length) && styles.buttonDisabled,
+            ]}>
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.continueText}>Xác nhận đặt lịch</Text>
+            )}
           </Pressable>
         </View>
       </SafeAreaView>
@@ -404,11 +598,84 @@ function BookingModal({
   );
 }
 
-function StepTitle({ title, caption }: { title: string; caption: string }) {
+function CancelAppointmentModal({
+  appointment,
+  saving,
+  onClose,
+  onConfirm,
+}: {
+  appointment: Appointment;
+  saving: boolean;
+  onClose: () => void;
+  onConfirm: (reason?: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState('');
+
   return (
-    <View>
-      <Text style={styles.stepTitle}>{title}</Text>
-      <Text style={styles.stepCaption}>{caption}</Text>
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}>
+      <View style={styles.dialogBackdrop}>
+        <View style={styles.dialogCard}>
+          <Text style={styles.dialogTitle}>Hủy lịch hẹn</Text>
+          <Text style={styles.dialogText}>
+            Bạn có chắc muốn hủy lịch{' '}
+            {appointment.services.map((service) => service.nameSnapshot).join(', ')}?
+          </Text>
+          <TextInput
+            value={reason}
+            onChangeText={setReason}
+            placeholder="Lý do hủy (không bắt buộc)"
+            placeholderTextColor="#98a2b3"
+            multiline
+            maxLength={1000}
+            style={styles.cancelReasonInput}
+          />
+          <View style={styles.dialogActions}>
+            <Pressable disabled={saving} onPress={onClose} style={styles.keepButton}>
+              <Text style={styles.keepButtonText}>Giữ lịch</Text>
+            </Pressable>
+            <Pressable
+              disabled={saving}
+              onPress={() => void onConfirm(reason)}
+              style={styles.confirmCancelButton}>
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.confirmCancelText}>Hủy lịch</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function FormSection({
+  title,
+  caption,
+  children,
+}: {
+  title: string;
+  caption: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.formSection}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionCaption}>{caption}</Text>
+      <View style={styles.sectionContent}>{children}</View>
+    </View>
+  );
+}
+
+function SelectionMark({ selected, multiple = false }: { selected: boolean; multiple?: boolean }) {
+  return (
+    <View style={[styles.selectionMark, multiple && styles.selectionSquare, selected && styles.selectionMarkActive]}>
+      {selected ? <Text style={styles.selectionCheck}>✓</Text> : null}
     </View>
   );
 }
@@ -463,51 +730,58 @@ const styles = StyleSheet.create({
   segmentButtonActive: { backgroundColor: colors.surface },
   segmentText: { color: colors.muted, fontWeight: '700' },
   segmentTextActive: { color: colors.ink, fontWeight: '900' },
-  card: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 7 },
+  loader: { paddingVertical: 50 },
+  card: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 8 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   code: { color: colors.primary, fontSize: 12, fontWeight: '900' },
   badge: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999 },
   badgeText: { fontSize: 10, fontWeight: '800' },
   serviceName: { color: colors.ink, fontSize: 17, lineHeight: 23, fontWeight: '900', marginTop: 3 },
   vehicleText: { color: colors.muted, lineHeight: 20 },
-  scheduleRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 13, marginTop: 7, borderTopWidth: 1, borderTopColor: colors.border },
+  scheduleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingTop: 13, marginTop: 7, borderTopWidth: 1, borderTopColor: colors.border },
+  scheduleCopy: { flex: 1 },
   metaLabel: { color: '#98a2b3', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
   metaValue: { color: colors.ink, fontSize: 12, fontWeight: '800', marginTop: 4 },
+  durationText: { color: colors.muted, fontSize: 11, marginTop: 4 },
   priceWrap: { alignItems: 'flex-end' },
   price: { color: colors.ink, fontSize: 14, fontWeight: '900', marginTop: 4 },
+  appointmentNote: { color: colors.muted, lineHeight: 19, padding: 11, borderRadius: 12, backgroundColor: colors.background },
+  cancelButton: { alignSelf: 'flex-end', paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: '#fef3f2' },
+  cancelButtonText: { color: colors.danger, fontWeight: '800' },
   empty: { alignItems: 'center', padding: 30, borderRadius: 18, backgroundColor: colors.surface },
   emptyTitle: { color: colors.ink, fontSize: 18, fontWeight: '900' },
   emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 20, marginTop: 6 },
   modalSafe: { flex: 1, backgroundColor: colors.background },
-  modalHeader: { height: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, backgroundColor: colors.surface },
-  backText: { width: 74, color: colors.primary, fontWeight: '800' },
-  modalHeaderTitle: { color: colors.ink, fontWeight: '900', fontSize: 16 },
-  stepCount: { width: 74, textAlign: 'right', color: colors.muted, fontWeight: '800' },
-  progressTrack: { height: 4, backgroundColor: '#e9edf3' },
-  progressFill: { height: 4, backgroundColor: colors.primary },
-  modalContent: { padding: 20, paddingBottom: 32, gap: 16 },
-  stepTitle: { color: colors.ink, fontSize: 27, fontWeight: '900' },
-  stepCaption: { color: colors.muted, marginTop: 5, lineHeight: 20 },
-  categoryRow: { gap: 9, paddingVertical: 2 },
-  categoryChip: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  categoryChipActive: { borderColor: colors.primary, backgroundColor: colors.primary },
-  categoryText: { color: colors.muted, fontWeight: '800', fontSize: 12 },
-  categoryTextActive: { color: '#fff' },
-  selectCard: { flexDirection: 'row', padding: 16, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 12 },
+  modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: 20, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalTitle: { color: colors.ink, fontSize: 25, fontWeight: '900' },
+  modalSubtitle: { color: colors.muted, marginTop: 4 },
+  closeText: { color: colors.primary, fontWeight: '800', paddingTop: 5 },
+  modalContent: { padding: 20, paddingBottom: 34, gap: 18 },
+  modalLoader: { paddingVertical: 70 },
+  optionError: { alignItems: 'center', padding: 24, borderRadius: 18, backgroundColor: colors.surface },
+  optionErrorTitle: { color: colors.ink, fontSize: 18, fontWeight: '900' },
+  optionErrorText: { color: colors.muted, textAlign: 'center', lineHeight: 20, marginTop: 7 },
+  retryButton: { marginTop: 16, paddingHorizontal: 18, paddingVertical: 11, borderRadius: 12, backgroundColor: colors.primary },
+  retryText: { color: '#fff', fontWeight: '800' },
+  formSection: { padding: 17, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  sectionTitle: { color: colors.ink, fontSize: 19, fontWeight: '900' },
+  sectionCaption: { color: colors.muted, lineHeight: 19, marginTop: 4 },
+  sectionContent: { gap: 11, marginTop: 15 },
+  selectCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 12 },
+  serviceCard: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 12 },
   selectCardActive: { borderColor: colors.primary, backgroundColor: '#f5f9ff' },
-  selectCopy: { flex: 1 },
-  selectTitle: { color: colors.ink, fontSize: 16, fontWeight: '900' },
-  selectDescription: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
-  duration: { color: colors.primary, fontSize: 11, fontWeight: '800', marginTop: 8 },
-  selectRight: { alignItems: 'flex-end', justifyContent: 'space-between' },
-  selectPrice: { color: colors.ink, fontSize: 13, fontWeight: '900' },
-  radio: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#cbd1da' },
-  radioActive: { borderColor: colors.primary },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
-  vehicleCard: { flexDirection: 'row', alignItems: 'center', padding: 17, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 13 },
   vehicleMark: { width: 52, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.tint },
-  vehicleMarkText: { color: colors.primary, fontSize: 10, fontWeight: '900' },
-  fieldTitle: { color: colors.ink, fontSize: 14, fontWeight: '900', marginBottom: 10 },
+  vehicleMarkText: { color: colors.primary, fontSize: 9, fontWeight: '900' },
+  selectCopy: { flex: 1 },
+  selectTitle: { color: colors.ink, fontSize: 15, fontWeight: '900' },
+  selectDescription: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  serviceMeta: { color: colors.primary, fontSize: 12, fontWeight: '800', marginTop: 8 },
+  selectionMark: { width: 23, height: 23, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#cbd1da' },
+  selectionSquare: { borderRadius: 6 },
+  selectionMarkActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  selectionCheck: { color: '#fff', fontSize: 13, fontWeight: '900' },
+  helperBox: { color: colors.muted, lineHeight: 20, padding: 14, borderRadius: 13, backgroundColor: colors.background },
+  fieldTitle: { color: colors.ink, fontSize: 14, fontWeight: '900' },
   dateRow: { gap: 9, paddingBottom: 4 },
   dateCard: { width: 64, alignItems: 'center', paddingVertical: 11, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   dateCardActive: { borderColor: colors.primary, backgroundColor: colors.primary },
@@ -515,23 +789,30 @@ const styles = StyleSheet.create({
   dateDay: { color: colors.ink, fontSize: 21, fontWeight: '900', marginTop: 3 },
   dateMonth: { color: colors.muted, fontSize: 10, marginTop: 2 },
   dateTextActive: { color: '#fff' },
-  slotGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  slot: { width: '30.5%', alignItems: 'center', paddingVertical: 13, borderRadius: 13, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  slotGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  slot: { width: '23%', alignItems: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   slotActive: { borderColor: colors.primary, backgroundColor: colors.primary },
-  slotDisabled: { backgroundColor: '#eef1f5' },
   slotText: { color: colors.ink, fontWeight: '800' },
   slotTextActive: { color: '#fff' },
-  slotTextDisabled: { color: '#b3bac5', textDecorationLine: 'line-through' },
-  summaryCard: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 15 },
+  noteInput: { minHeight: 110, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, color: colors.ink, textAlignVertical: 'top' },
+  summaryCard: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 14 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 18 },
   summaryLabel: { color: colors.muted, fontSize: 13 },
   summaryValue: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '800', textAlign: 'right' },
   summaryStrong: { color: colors.primary, fontSize: 17, fontWeight: '900' },
   summaryDivider: { height: 1, backgroundColor: colors.border },
-  noteInput: { minHeight: 105, padding: 14, borderRadius: 15, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, color: colors.ink, textAlignVertical: 'top' },
-  policy: { padding: 14, borderRadius: 14, backgroundColor: colors.tint },
-  policyText: { color: colors.primaryDark, fontSize: 12, lineHeight: 18 },
   footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
   continueButton: { minHeight: 54, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: colors.primary },
   continueText: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  buttonDisabled: { opacity: 0.5 },
+  dialogBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20, backgroundColor: 'rgba(16, 24, 40, 0.55)' },
+  dialogCard: { width: '100%', maxWidth: 520, padding: 20, borderRadius: 20, backgroundColor: colors.surface },
+  dialogTitle: { color: colors.ink, fontSize: 22, fontWeight: '900' },
+  dialogText: { color: colors.muted, lineHeight: 20, marginTop: 8 },
+  cancelReasonInput: { minHeight: 100, marginTop: 17, padding: 13, borderRadius: 13, borderWidth: 1, borderColor: colors.border, color: colors.ink, textAlignVertical: 'top' },
+  dialogActions: { flexDirection: 'row', gap: 10, marginTop: 17 },
+  keepButton: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, borderWidth: 1, borderColor: colors.border },
+  keepButtonText: { color: colors.ink, fontWeight: '800' },
+  confirmCancelButton: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.danger },
+  confirmCancelText: { color: '#fff', fontWeight: '800' },
 });

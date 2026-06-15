@@ -1,7 +1,14 @@
 import { Platform } from 'react-native';
 
 import { tokenStorage } from '@/lib/storage';
-import type { User, Vehicle, VehicleInput } from '@/types';
+import type {
+  Appointment,
+  CreateAppointmentInput,
+  Service,
+  User,
+  Vehicle,
+  VehicleInput,
+} from '@/types';
 
 const fallbackHost = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 export const API_URL =
@@ -124,6 +131,35 @@ export const usersApi = {
       await request<User>('/users/me', {
         method: 'PATCH',
         body: JSON.stringify({ displayName: displayName.trim() }),
+      })
+    ).data,
+};
+
+export const servicesApi = {
+  listActive: async () =>
+    (await request<Service[]>('/services/active?limit=100')).data,
+};
+
+export const appointmentsApi = {
+  listMine: async () =>
+    (await request<Appointment[]>('/appointments/my?limit=100')).data,
+  create: async (input: CreateAppointmentInput) =>
+    (
+      await request<Appointment>('/appointments', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...input,
+          note: input.note?.trim() || undefined,
+        }),
+      })
+    ).data,
+  cancelMine: async (appointmentId: string, cancelReason?: string) =>
+    (
+      await request<Appointment>(`/appointments/my/${appointmentId}/cancel`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          cancelReason: cancelReason?.trim() || undefined,
+        }),
       })
     ).data,
 };
