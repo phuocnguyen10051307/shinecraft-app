@@ -92,9 +92,10 @@ export default function AppointmentsScreen() {
 
   const loadAppointments = useCallback(
     async (quiet = false) => {
+      if (!user) return;
       if (!quiet) setLoading(true);
       try {
-        setAppointments(await appointmentsApi.listMine());
+        setAppointments(await appointmentsApi.list(user.role));
       } catch (error) {
         await handleError(error, 'Không tải được lịch hẹn');
       } finally {
@@ -102,11 +103,11 @@ export default function AppointmentsScreen() {
         setRefreshing(false);
       }
     },
-    [handleError],
+    [handleError, user],
   );
 
   const loadBookingOptions = useCallback(async () => {
-    if (!user) return;
+    if (!user || user.role !== 'customer') return;
     setOptionsLoading(true);
     try {
       const [nextVehicles, nextServices] = await Promise.all([
@@ -142,6 +143,7 @@ export default function AppointmentsScreen() {
   );
 
   const openBooking = async () => {
+    if (user?.role !== 'customer') return;
     if (!vehicles.length || !services.length) {
       await loadBookingOptions();
     }
@@ -197,21 +199,25 @@ export default function AppointmentsScreen() {
             <Text style={styles.title}>Lịch hẹn của bạn</Text>
             <Text style={styles.subtitle}>Đặt dịch vụ và theo dõi tiến độ chăm sóc xe.</Text>
           </View>
-          <Pressable onPress={() => void openBooking()} style={styles.addButton}>
-            <Text style={styles.addButtonIcon}>+</Text>
-          </Pressable>
+          {user?.role === 'customer' ? (
+            <Pressable onPress={() => void openBooking()} style={styles.addButton}>
+              <Text style={styles.addButtonIcon}>+</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        <Pressable onPress={() => void openBooking()} style={styles.bookingBanner}>
-          <View style={styles.bannerIcon}>
-            <Text style={styles.bannerIconText}>SC</Text>
-          </View>
-          <View style={styles.bannerCopy}>
-            <Text style={styles.bannerTitle}>Đặt lịch chăm sóc xe</Text>
-            <Text style={styles.bannerText}>Chọn xe, nhiều dịch vụ và thời gian phù hợp.</Text>
-          </View>
-          <Text style={styles.bannerArrow}>›</Text>
-        </Pressable>
+        {user?.role === 'customer' ? (
+          <Pressable onPress={() => void openBooking()} style={styles.bookingBanner}>
+            <View style={styles.bannerIcon}>
+              <Text style={styles.bannerIconText}>SC</Text>
+            </View>
+            <View style={styles.bannerCopy}>
+              <Text style={styles.bannerTitle}>Đặt lịch chăm sóc xe</Text>
+              <Text style={styles.bannerText}>Chọn xe, nhiều dịch vụ và thời gian phù hợp.</Text>
+            </View>
+            <Text style={styles.bannerArrow}>›</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.stats}>
           <Stat value={String(appointments.length)} label="Tổng lịch hẹn" />
@@ -250,6 +256,7 @@ export default function AppointmentsScreen() {
             <AppointmentCard
               key={appointment._id}
               appointment={appointment}
+              allowCancel={user?.role === 'customer'}
               onCancel={setCancelAppointment}
             />
           ))
@@ -289,13 +296,16 @@ export default function AppointmentsScreen() {
 
 function AppointmentCard({
   appointment,
+  allowCancel,
   onCancel,
 }: {
   appointment: Appointment;
+  allowCancel: boolean;
   onCancel: (appointment: Appointment) => void;
 }) {
   const status = statusConfig[appointment.status];
-  const canCancel = appointment.status === 'pending' || appointment.status === 'confirmed';
+  const canCancel =
+    allowCancel && (appointment.status === 'pending' || appointment.status === 'confirmed');
   const scheduledAt = new Date(appointment.scheduledAt);
 
   return (

@@ -30,7 +30,37 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = RequestInit & { token?: string | null };
+type RequestOptions = RequestInit & {
+  token?: string | null;
+  skipAuthRefresh?: boolean;
+  hasRetried?: boolean;
+};
+
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const refreshToken = await tokenStorage.getRefresh();
+      if (!refreshToken) {
+        throw new ApiError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 401);
+      }
+
+      const response = await request<{ accessToken: string }>('/auth/refresh-token', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+        token: null,
+        skipAuthRefresh: true,
+      });
+      await tokenStorage.set(response.data.accessToken);
+      return response.data.accessToken;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+
+  return refreshPromise;
+}
 
 async function request<T>(path: string, options: RequestOptions = {}) {
   const token = options.token === undefined ? await tokenStorage.get() : options.token;
@@ -54,7 +84,25 @@ async function request<T>(path: string, options: RequestOptions = {}) {
     const payload = (await response.json().catch(() => ({}))) as Partial<ApiEnvelope<T>>;
 
     if (!response.ok) {
-      if (response.status === 401) {
+      if (
+        response.status === 401 &&
+        options.token !== null &&
+        !options.skipAuthRefresh &&
+        !options.hasRetried
+      ) {
+        try {
+          const nextToken = await refreshAccessToken();
+          return request<T>(path, {
+            ...options,
+            token: nextToken,
+            hasRetried: true,
+          });
+        } catch {
+          await tokenStorage.remove();
+        }
+      }
+
+      if (response.status === 401 && options.hasRetried) {
         await tokenStorage.remove();
       }
       throw new ApiError(payload.message || 'Không thể kết nối đến máy chủ.', response.status);
@@ -77,7 +125,11 @@ async function request<T>(path: string, options: RequestOptions = {}) {
 
 export const authApi = {
   signIn: async (phone: string, password: string) => {
-    const response = await request<{ user: User; accessToken: string }>('/auth/signin', {
+    const response = await request<{
+      user: User;
+      accessToken: string;
+      refreshToken: string;
+    }>('/auth/signin', {
       method: 'POST',
       body: JSON.stringify({ phone: phone.trim(), password }),
       token: null,
@@ -99,8 +151,13 @@ export const authApi = {
   },
   me: async (token?: string) => (await request<User>('/auth/me', { token })).data,
   signOut: async () => {
+    const refreshToken = await tokenStorage.getRefresh();
     try {
-      await request('/auth/signout', { method: 'POST' });
+      await request('/auth/signout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+        skipAuthRefresh: true,
+      });
     } catch {
       // Local sign-out must still complete when the server is unavailable.
     }
@@ -141,8 +198,15 @@ export const servicesApi = {
 };
 
 export const appointmentsApi = {
-  listMine: async () =>
-    (await request<Appointment[]>('/appointments/my?limit=100')).data,
+  list: async (role: User['role']) => {
+    const path =
+      role === 'admin'
+        ? '/appointments?limit=100'
+        : role === 'staff'
+          ? '/appointments/staff/my?limit=100'
+          : '/appointments/my?limit=100';
+    return (await request<Appointment[]>(path)).data;
+  },
   create: async (input: CreateAppointmentInput) =>
     (
       await request<Appointment>('/appointments', {

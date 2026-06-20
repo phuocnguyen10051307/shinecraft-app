@@ -45,14 +45,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const validateSession = useCallback(async () => {
     const savedToken = await tokenStorage.get();
-    if (!savedToken) {
+    const savedRefreshToken = await tokenStorage.getRefresh();
+    if (!savedToken && !savedRefreshToken) {
       await clearSession();
       return false;
     }
 
     try {
-      const currentUser = await authApi.me(savedToken);
-      setToken(savedToken);
+      const currentUser = await authApi.me(savedToken ?? undefined);
+      setToken(await tokenStorage.get());
       setUser(currentUser);
       return true;
     } catch {
@@ -81,7 +82,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signIn = useCallback(async (phone: string, password: string) => {
     const session = await authApi.signIn(phone, password);
-    await tokenStorage.set(session.accessToken);
+    await tokenStorage.setSession(session.accessToken, session.refreshToken);
     setToken(session.accessToken);
     setUser(session.user);
   }, []);
