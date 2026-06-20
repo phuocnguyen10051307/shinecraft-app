@@ -45,8 +45,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const validateSession = useCallback(async () => {
     const savedToken = await tokenStorage.get();
-    const savedRefreshToken = await tokenStorage.getRefresh();
-    if (!savedToken && !savedRefreshToken) {
+    if (!savedToken) {
       await clearSession();
       return false;
     }
@@ -82,7 +81,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signIn = useCallback(async (phone: string, password: string) => {
     const session = await authApi.signIn(phone, password);
-    await tokenStorage.setSession(session.accessToken, session.refreshToken);
+    await tokenStorage.set(session.accessToken);
     setToken(session.accessToken);
     setUser(session.user);
   }, []);

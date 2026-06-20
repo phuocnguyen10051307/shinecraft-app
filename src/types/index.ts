@@ -4,22 +4,26 @@ export interface User {
   _id: string;
   phone: string;
   displayName: string;
-  role?: UserRole;
+  role: UserRole;
   avatarUrl?: string;
   loyaltyPoints?: number;
   isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type VehicleType = 'car' | 'motorbike' | 'other';
 
 export interface Vehicle {
   _id: string;
+  customerId?: string | Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
   type: VehicleType;
   brand: string;
   model: string;
   licensePlate: string;
   year: number;
   note?: string;
+  images?: { url: string; id: string }[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -59,7 +63,9 @@ export interface AppointmentServiceSnapshot {
 
 export interface Appointment {
   _id: string;
+  customerId: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
   vehicleId: Vehicle;
+  assignedStaffId: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'> | null;
   services: AppointmentServiceSnapshot[];
   scheduledAt: string;
   status: AppointmentStatus;
@@ -68,6 +74,10 @@ export interface Appointment {
   totalPrice: number;
   paymentStatus: 'unpaid' | 'paid' | 'refunded';
   cancelReason?: string | null;
+  cancelledAt?: string | null;
+  completedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CreateAppointmentInput {
@@ -75,4 +85,69 @@ export interface CreateAppointmentInput {
   services: { serviceId: string }[];
   scheduledAt: string;
   note?: string;
+}
+
+export interface ServiceHistory {
+  _id: string;
+  customerId: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
+  vehicleId: Vehicle;
+  appointmentId: Pick<Appointment, '_id' | 'status' | 'scheduledAt' | 'completedAt' | 'paymentStatus'>;
+  services: AppointmentServiceSnapshot[];
+  totalPrice: number;
+  totalEstimatedDuration: number;
+  servicedAt: string;
+  handledBy: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'> | null;
+  note?: string;
+  nextMaintenanceDate?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface MembershipTier {
+  _id: string;
+  name: string;
+  minTotalEarnedPoints: number;
+  discountPercent?: number | null;
+  description?: string | null;
+}
+
+export interface LoyaltyAccount {
+  _id: string;
+  currentPoints: number;
+  totalEarnedPoints: number;
+  totalRedeemedPoints: number;
+  totalExpiredPoints: number;
+  membershipTierId?: MembershipTier | string | null;
+}
+
+export interface LoyaltyTransaction {
+  _id: string;
+  type: 'earn' | 'redeem' | 'adjust' | 'expire';
+  points: number;
+  remainingPoints?: number | null;
+  description?: string | null;
+  expiresAt?: string | null;
+  createdAt?: string;
+}
+
+export interface Reward {
+  _id: string;
+  name: string;
+  description?: string | null;
+  requiredPoints: number;
+  discountType: 'percentage' | 'fixed_amount';
+  discountValue: number;
+  quantity?: number | null;
+  redeemedCount?: number;
+  isActive?: boolean;
+  expiredAt?: string | null;
+}
+
+export interface RewardRedemption {
+  _id: string;
+  rewardId?: Reward | string | null;
+  pointsUsed: number;
+  status: 'available' | 'used' | 'expired' | 'cancelled';
+  redeemedAt?: string;
+  usedAt?: string | null;
 }
