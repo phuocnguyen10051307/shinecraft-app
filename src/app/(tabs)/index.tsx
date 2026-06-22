@@ -1,140 +1,925 @@
-import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { router, type Href } from 'expo-router';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import {
+
+  ActivityIndicator,
+
+  Alert,
+
+  Pressable,
+
+  RefreshControl,
+
+  StyleSheet,
+
+  Text,
+
+  View,
+
+} from 'react-native';
+
+
 
 import { Screen } from '@/components/screen';
-import { colors } from '@/constants/shinecraft-theme';
-import { useAuth } from '@/contexts/auth-context';
 
-const services = [
-  { title: 'Rửa xe detailing', description: 'Làm sạch chuyên sâu, bảo vệ bề mặt sơn.' },
-  { title: 'Chăm sóc nội thất', description: 'Vệ sinh, khử mùi và dưỡng bề mặt nội thất.' },
-  { title: 'Đánh bóng và ceramic', description: 'Khôi phục độ bóng và tạo lớp bảo vệ lâu dài.' },
-  { title: 'Bảo dưỡng định kỳ', description: 'Kiểm tra tổng quát để xe luôn vận hành ổn định.' },
-];
+import { colors } from '@/constants/shinecraft-theme';
+
+import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
+
+import {
+
+  appointmentsApi,
+
+  dashboardApi,
+
+  loyaltyApi,
+
+  notificationsApi,
+
+  promotionsApi,
+
+  serviceHistoriesApi,
+
+} from '@/lib/api';
+
+import type { Appointment, DashboardOverview, LoyaltyAccount, Promotion, ServiceHistory } from '@/types';
+
+
+
+function formatCurrency(value: number) {
+
+  return `${value.toLocaleString('vi-VN')} d`;
+
+}
+
+
+
+function formatSchedule(value?: string) {
+
+  if (!value) return '';
+
+  return new Date(value).toLocaleString('vi-VN', {
+
+    day: '2-digit',
+
+    month: '2-digit',
+
+    hour: '2-digit',
+
+    minute: '2-digit',
+
+  });
+
+}
+
+
+
+const appointmentsPath = '/appointments' as Href;
+
+const serviceHistoriesPath = '/service-histories' as Href;
+
+const profilePath = '/profile' as Href;
+
+const notificationsPath = '/notifications' as Href;
+
+const promotionsPath = '/promotions' as Href;
+
+
 
 export default function HomeScreen() {
-  const { user } = useAuth();
+
+  const { user, validateSession } = useAuth();
+
+  const [loading, setLoading] = useState(true);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+
+  const [serviceHistories, setServiceHistories] = useState<ServiceHistory[]>([]);
+
+  const [loyaltyAccount, setLoyaltyAccount] = useState<LoyaltyAccount | null>(null);
+
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  const [dashboardOverview, setDashboardOverview] = useState<DashboardOverview | null>(null);
+
+
+
+  const load = useCallback(async () => {
+
+    if (!user) return;
+
+
+
+    try {
+
+      const baseTasks = [appointmentsApi.list(user.role), serviceHistoriesApi.list(user.role)] as const;
+
+
+
+      if (user.role === 'customer') {
+
+        const [nextAppointments, nextHistories, nextAccount, nextPromotions, nextUnreadNotifications] = await Promise.all([
+
+          ...baseTasks,
+
+          loyaltyApi.getMyAccount(),
+
+          promotionsApi.listActive(),
+
+          notificationsApi.getUnreadCount(),
+
+        ]);
+
+
+
+        setAppointments(nextAppointments);
+
+        setServiceHistories(nextHistories);
+
+        setLoyaltyAccount(nextAccount);
+
+        setPromotions(nextPromotions);
+
+        setUnreadNotifications(nextUnreadNotifications);
+
+        setDashboardOverview(null);
+
+      } else if (user.role === 'admin') {
+
+        const [nextAppointments, nextHistories, nextOverview] = await Promise.all([
+
+          ...baseTasks,
+
+          dashboardApi.getOverview(),
+
+        ]);
+
+
+
+        setAppointments(nextAppointments);
+
+        setServiceHistories(nextHistories);
+
+        setDashboardOverview(nextOverview);
+
+        setLoyaltyAccount(null);
+
+        setPromotions([]);
+
+        setUnreadNotifications(0);
+
+      } else {
+
+        const [nextAppointments, nextHistories] = await Promise.all(baseTasks);
+
+        setAppointments(nextAppointments);
+
+        setServiceHistories(nextHistories);
+
+        setDashboardOverview(null);
+
+        setLoyaltyAccount(null);
+
+        setPromotions([]);
+
+        setUnreadNotifications(0);
+
+      }
+
+    } catch (error) {
+
+      await validateSession();
+
+      Alert.alert('Không thể tải dữ liệu', getApiErrorMessage(error));
+
+    } finally {
+
+      setLoading(false);
+
+      setRefreshing(false);
+
+    }
+
+  }, [user, validateSession]);
+
+
+
+  useEffect(() => {
+
+    const task = Promise.resolve().then(load);
+
+    return () => {
+
+      void task;
+
+    };
+
+  }, [load]);
+
+
+
+  const upcomingAppointments = useMemo(
+
+    () =>
+
+      appointments
+
+        .filter((item) => item.status !== 'completed' && item.status !== 'cancelled')
+
+        .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+
+        .slice(0, 2),
+
+    [appointments],
+
+  );
+
+
+
+  const latestServiceHistory = useMemo(
+
+    () =>
+
+      [...serviceHistories]
+
+        .sort((a, b) => new Date(b.servicedAt).getTime() - new Date(a.servicedAt).getTime())[0] ?? null,
+
+    [serviceHistories],
+
+  );
+
+
+
+  const heroTitle =
+
+    user?.role === 'admin'
+
+      ? 'Bảng điều hành mobile cho admin'
+
+      : user?.role === 'staff'
+
+        ? 'Theo dõi lịch được giao thật nhanh'
+
+        : 'Xe sạch hơn, lịch hẹn rõ hơn';
+
+
+
+  const heroText =
+
+    user?.role === 'admin'
+
+      ? 'Xem nhanh chỉ số vận hành chính và điều phối công việc ngay trên điện thoại.'
+
+      : user?.role === 'staff'
+
+        ? 'Tập trung vào lịch hẹn và lịch sử dịch vụ bạn đang phụ trách.'
+
+        : 'Quản lý xe, lịch hẹn, thông báo và ưu đãi trong một nơi.';
+
+
 
   return (
-    <Screen>
+
+    <Screen
+
+      refreshControl={
+
+        <RefreshControl
+
+          refreshing={refreshing}
+
+          onRefresh={() => {
+
+            setRefreshing(true);
+
+            void load();
+
+          }}
+
+        />
+
+      }
+
+    >
+
       <View style={styles.header}>
+
         <View>
+
           <Text style={styles.eyebrow}>SHINECRAFT MOBILE</Text>
+
           <Text style={styles.title}>Xin chào, {user?.displayName}</Text>
-          <Text style={styles.subtitle}>Hôm nay xe của bạn cần được chăm sóc thế nào?</Text>
+
+          <Text style={styles.subtitle}>{heroText}</Text>
+
         </View>
-        <View style={styles.avatar}>
+
+        <Pressable onPress={() => router.push(profilePath)} style={styles.avatar}>
+
           <Text style={styles.avatarText}>{user?.displayName?.slice(0, 1).toUpperCase()}</Text>
-        </View>
+
+        </Pressable>
+
       </View>
+
+
 
       <View style={styles.hero}>
-        <Text style={styles.heroKicker}>CHĂM SÓC XE TOÀN DIỆN</Text>
-        <Text style={styles.heroTitle}>Sạch hơn. Bóng hơn. An tâm hơn.</Text>
-        <Text style={styles.heroText}>
-          Theo dõi xe, lịch dịch vụ và quyền lợi thành viên ngay trên điện thoại.
-        </Text>
-        <Pressable onPress={() => router.push('/(tabs)/appointments')} style={styles.heroButton}>
-          <Text style={styles.heroButtonText}>Xem lịch hẹn</Text>
-        </Pressable>
+
+        <Text style={styles.heroKicker}>{user?.role?.toUpperCase()}</Text>
+
+        <Text style={styles.heroTitle}>{heroTitle}</Text>
+
+        <Text style={styles.heroText}>{heroText}</Text>
+
+        <View style={styles.heroActions}>
+
+          <Pressable onPress={() => router.push(appointmentsPath)} style={styles.heroButtonPrimary}>
+
+            <Text style={styles.heroButtonPrimaryText}>Xem lịch hẹn</Text>
+
+          </Pressable>
+
+          {user?.role === 'customer' ? (
+
+            <Pressable onPress={() => router.push(notificationsPath)} style={styles.heroButtonSecondary}>
+
+              <Text style={styles.heroButtonSecondaryText}>Thng bo</Text>
+
+            </Pressable>
+
+          ) : null}
+
+        </View>
+
       </View>
+
+
 
       <View style={styles.statRow}>
-        <Stat value={String(user?.loyaltyPoints ?? 0)} label="Điểm thưởng" />
-        <Stat value="24" label="Dịch vụ" />
-        <Stat value="15%" label="Ưu đãi" />
+
+        <Stat
+
+          value={String(dashboardOverview?.totalAppointments ?? appointments.length)}
+
+          label={user?.role === 'admin' ? 'Tổng lịch' : 'Lịch hẹn'}
+
+        />
+
+        <Stat
+
+          value={String(
+
+            user?.role === 'customer'
+
+              ? loyaltyAccount?.currentPoints ?? 0
+
+              : dashboardOverview?.totalServicesCompleted ?? serviceHistories.length,
+
+          )}
+
+          label={user?.role === 'customer' ? 'Điểm khả dụng' : 'Dịch vụ xong'}
+
+        />
+
+        <Stat
+
+          value={
+
+            user?.role === 'customer'
+
+              ? String(unreadNotifications)
+
+              : user?.role === 'admin'
+
+                ? String(dashboardOverview?.totalActivePromotions ?? 0)
+
+                : String(upcomingAppointments.length)
+
+          }
+
+          label={user?.role === 'customer' ? 'Thông báo mới' : user?.role === 'admin' ? 'KM đang chạy' : 'Sắp tới'}
+
+        />
+
       </View>
 
-      <View>
-        <Text style={styles.sectionTitle}>Dịch vụ nổi bật</Text>
-        <Text style={styles.sectionCaption}>Giải pháp chăm sóc phù hợp cho từng nhu cầu.</Text>
+
+
+      <View style={styles.quickGrid}>
+
+        <QuickAction
+
+          title="Lịch hẹn"
+
+          description="Theo dõi và cập nhật trạng thái công việc."
+
+          onPress={() => router.push(appointmentsPath)}
+
+        />
+
+        <QuickAction
+
+          title="Lịch sử dịch vụ"
+
+          description="Xem những lần chăm sóc xe gần đây."
+
+          onPress={() => router.push(serviceHistoriesPath)}
+
+        />
+
+        {user?.role === 'customer' ? (
+
+          <>
+
+            <QuickAction
+
+              title="Thng bo"
+
+              description={unreadNotifications ? `${unreadNotifications} thông báo chưa đọc.` : 'Không có thông báo mới.'}
+
+              onPress={() => router.push(notificationsPath)}
+
+            />
+
+            <QuickAction
+
+              title="Khuyến mãi"
+
+              description={promotions.length ? `${promotions.length} ưu đãi đang hiệu lực.` : 'Chưa có ưu đãi mới.'}
+
+              onPress={() => router.push(promotionsPath)}
+
+            />
+
+          </>
+
+        ) : null}
+
       </View>
-      <View style={styles.grid}>
-        {services.map((service, index) => (
-          <View key={service.title} style={styles.service}>
-            <View style={styles.serviceNumber}>
-              <Text style={styles.serviceNumberText}>0{index + 1}</Text>
-            </View>
-            <Text style={styles.serviceTitle}>{service.title}</Text>
-            <Text style={styles.serviceText}>{service.description}</Text>
+
+
+
+      <SectionHeader title="Việc cần chú ý" caption="Các mục quan trọng nhất lúc này." />
+
+
+
+      {loading ? <ActivityIndicator color={colors.primary} size="large" style={styles.loader} /> : null}
+
+
+
+      {!loading && upcomingAppointments.length === 0 ? (
+
+        <EmptyCard
+
+          title="Không có lịch hẹn cần xử lý ngay"
+
+          description="Khi có lịch hẹn mới hoặc sắp tới, bạn sẽ thấy ở đây."
+
+        />
+
+      ) : null}
+
+
+
+      {upcomingAppointments.map((appointment) => (
+
+        <View key={appointment._id} style={styles.itemCard}>
+
+          <View style={styles.itemTop}>
+
+            <Text style={styles.itemCode}>#{appointment._id.slice(-8).toUpperCase()}</Text>
+
+            <Text style={styles.itemBadge}>{appointment.status}</Text>
+
           </View>
-        ))}
-      </View>
+
+          <Text style={styles.itemTitle}>
+
+            {appointment.services.map((service) => service.nameSnapshot).join(', ')}
+
+          </Text>
+
+          <Text style={styles.itemMeta}>
+
+            {appointment.vehicleId.brand} {appointment.vehicleId.model}  {appointment.vehicleId.licensePlate}
+
+          </Text>
+
+          <Text style={styles.itemMeta}>Thời gian: {formatSchedule(appointment.scheduledAt)}</Text>
+
+          <Text style={styles.itemPrice}>{formatCurrency(appointment.totalPrice)}</Text>
+
+        </View>
+
+      ))}
+
+
+
+      <SectionHeader
+
+        title={user?.role === 'customer' ? 'Tổng quan tài khoản' : 'Cập nhật gần nhất'}
+
+        caption={user?.role === 'customer' ? 'Thông tin loyalty và lịch sử chăm sóc gần đây.' : 'Một số chỉ số để bạn nắm tình hình nhanh.'}
+
+      />
+
+
+
+      {user?.role === 'customer' ? (
+
+        <View style={styles.infoPanel}>
+
+          <InfoRow
+
+            label="Hạng thành viên"
+
+            value={
+
+              typeof loyaltyAccount?.membershipTierId === 'object'
+
+                ? loyaltyAccount.membershipTierId?.name ?? '-'
+
+                : '-'
+
+            }
+
+          />
+
+          <InfoRow label="Uu di dang c" value={String(promotions.length)} />
+
+          <InfoRow label="Lần chăm xe gần nhất" value={formatSchedule(latestServiceHistory?.servicedAt)} />
+
+        </View>
+
+      ) : user?.role === 'admin' && dashboardOverview ? (
+
+        <View style={styles.infoPanel}>
+
+          <InfoRow label="Khch hng" value={String(dashboardOverview.totalCustomers)} />
+
+          <InfoRow label="Xe đang quản lý" value={String(dashboardOverview.totalVehicles)} />
+
+          <InfoRow label="Doanh thu" value={formatCurrency(dashboardOverview.revenue.total)} />
+
+        </View>
+
+      ) : (
+
+        <View style={styles.infoPanel}>
+
+          <InfoRow label="Lịch đang mở" value={String(upcomingAppointments.length)} />
+
+          <InfoRow label="Lịch sử được giao" value={String(serviceHistories.length)} />
+
+          <InfoRow label="Lần cập nhật cuối" value={formatSchedule(latestServiceHistory?.servicedAt)} />
+
+        </View>
+
+      )}
+
     </Screen>
+
   );
+
 }
+
+
+
+function SectionHeader({ title, caption }: { title: string; caption: string }) {
+
+  return (
+
+    <View>
+
+      <Text style={styles.sectionTitle}>{title}</Text>
+
+      <Text style={styles.sectionCaption}>{caption}</Text>
+
+    </View>
+
+  );
+
+}
+
+
 
 function Stat({ value, label }: { value: string; label: string }) {
+
   return (
+
     <View style={styles.stat}>
+
       <Text style={styles.statValue}>{value}</Text>
+
       <Text style={styles.statLabel}>{label}</Text>
+
     </View>
+
   );
+
 }
 
+
+
+function QuickAction({
+
+  title,
+
+  description,
+
+  onPress,
+
+}: {
+
+  title: string;
+
+  description: string;
+
+  onPress: () => void;
+
+}) {
+
+  return (
+
+    <Pressable onPress={onPress} style={styles.quickCard}>
+
+      <Text style={styles.quickTitle}>{title}</Text>
+
+      <Text style={styles.quickText}>{description}</Text>
+
+      <Text style={styles.quickLink}>Mở ngay</Text>
+
+    </Pressable>
+
+  );
+
+}
+
+
+
+function EmptyCard({ title, description }: { title: string; description: string }) {
+
+  return (
+
+    <View style={styles.emptyCard}>
+
+      <Text style={styles.emptyTitle}>{title}</Text>
+
+      <Text style={styles.emptyText}>{description}</Text>
+
+    </View>
+
+  );
+
+}
+
+
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+
+  return (
+
+    <View style={styles.infoRow}>
+
+      <Text style={styles.infoLabel}>{label}</Text>
+
+      <Text style={styles.infoValue}>{value || '-'}</Text>
+
+    </View>
+
+  );
+
+}
+
+
+
 const styles = StyleSheet.create({
+
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+
   eyebrow: { color: colors.primary, fontSize: 11, fontWeight: '900', letterSpacing: 1.5 },
+
   title: { color: colors.ink, fontSize: 25, fontWeight: '900', marginTop: 5 },
+
   subtitle: { color: colors.muted, marginTop: 5, maxWidth: 280, lineHeight: 20 },
+
   avatar: {
+
     width: 48,
+
     height: 48,
+
     borderRadius: 16,
+
     backgroundColor: colors.tint,
+
     alignItems: 'center',
+
     justifyContent: 'center',
+
   },
+
   avatarText: { color: colors.primary, fontSize: 19, fontWeight: '900' },
+
   hero: {
+
     padding: 22,
+
     borderRadius: 24,
+
     backgroundColor: colors.ink,
+
     gap: 10,
+
   },
+
   heroKicker: { color: '#84adff', fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
+
   heroTitle: { color: '#fff', fontSize: 27, lineHeight: 34, fontWeight: '900', maxWidth: 300 },
+
   heroText: { color: '#d0d5dd', lineHeight: 21 },
-  heroButton: {
-    alignSelf: 'flex-start',
+
+  heroActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
+
+  heroButtonPrimary: {
+
     backgroundColor: colors.primary,
+
     paddingHorizontal: 17,
+
     paddingVertical: 12,
+
     borderRadius: 12,
-    marginTop: 5,
+
   },
-  heroButtonText: { color: '#fff', fontWeight: '800' },
+
+  heroButtonPrimaryText: { color: '#fff', fontWeight: '800' },
+
+  heroButtonSecondary: {
+
+    backgroundColor: '#1d2939',
+
+    paddingHorizontal: 17,
+
+    paddingVertical: 12,
+
+    borderRadius: 12,
+
+    borderWidth: 1,
+
+    borderColor: '#344054',
+
+  },
+
+  heroButtonSecondaryText: { color: '#fff', fontWeight: '800' },
+
   statRow: { flexDirection: 'row', gap: 10 },
+
   stat: {
+
     flex: 1,
+
     padding: 14,
+
     borderRadius: 17,
+
     backgroundColor: colors.surface,
+
     borderWidth: 1,
+
     borderColor: colors.border,
+
   },
+
   statValue: { color: colors.ink, fontSize: 22, fontWeight: '900' },
+
   statLabel: { color: colors.muted, fontSize: 11, marginTop: 3 },
-  sectionTitle: { color: colors.ink, fontSize: 21, fontWeight: '900' },
-  sectionCaption: { color: colors.muted, marginTop: 4 },
-  grid: { gap: 12 },
-  service: {
+
+  quickGrid: { gap: 12 },
+
+  quickCard: {
+
     padding: 18,
+
     borderRadius: 18,
+
     backgroundColor: colors.surface,
+
     borderWidth: 1,
+
     borderColor: colors.border,
+
+    gap: 6,
+
   },
-  serviceNumber: {
-    width: 36,
-    height: 30,
-    borderRadius: 9,
-    backgroundColor: colors.tint,
+
+  quickTitle: { color: colors.ink, fontSize: 17, fontWeight: '800' },
+
+  quickText: { color: colors.muted, lineHeight: 20 },
+
+  quickLink: { color: colors.primary, fontWeight: '800', marginTop: 2 },
+
+  sectionTitle: { color: colors.ink, fontSize: 21, fontWeight: '900' },
+
+  sectionCaption: { color: colors.muted, marginTop: 4 },
+
+  loader: { paddingVertical: 36 },
+
+  emptyCard: {
+
+    padding: 24,
+
+    borderRadius: 18,
+
+    backgroundColor: colors.surface,
+
+    borderWidth: 1,
+
+    borderColor: colors.border,
+
     alignItems: 'center',
-    justifyContent: 'center',
+
   },
-  serviceNumberText: { color: colors.primary, fontSize: 11, fontWeight: '900' },
-  serviceTitle: { color: colors.ink, fontSize: 17, fontWeight: '800', marginTop: 12 },
-  serviceText: { color: colors.muted, lineHeight: 20, marginTop: 5 },
+
+  emptyTitle: { color: colors.ink, fontSize: 18, fontWeight: '800' },
+
+  emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 20, marginTop: 6 },
+
+  itemCard: {
+
+    padding: 18,
+
+    borderRadius: 18,
+
+    backgroundColor: colors.surface,
+
+    borderWidth: 1,
+
+    borderColor: colors.border,
+
+    gap: 8,
+
+  },
+
+  itemTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+
+  itemCode: { color: colors.primary, fontSize: 12, fontWeight: '900' },
+
+  itemBadge: {
+
+    color: colors.success,
+
+    backgroundColor: '#ecfdf3',
+
+    paddingHorizontal: 10,
+
+    paddingVertical: 6,
+
+    borderRadius: 999,
+
+    overflow: 'hidden',
+
+    fontSize: 11,
+
+    fontWeight: '800',
+
+  },
+
+  itemTitle: { color: colors.ink, fontSize: 17, fontWeight: '900' },
+
+  itemMeta: { color: colors.muted, lineHeight: 19 },
+
+  itemPrice: { color: colors.ink, fontWeight: '900', marginTop: 4 },
+
+  infoPanel: {
+
+    padding: 18,
+
+    borderRadius: 18,
+
+    backgroundColor: colors.surface,
+
+    borderWidth: 1,
+
+    borderColor: colors.border,
+
+    gap: 14,
+
+  },
+
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
+
+  infoLabel: { color: colors.muted, flex: 1 },
+
+  infoValue: { color: colors.ink, fontWeight: '800', flex: 1, textAlign: 'right' },
+
 });
+
+

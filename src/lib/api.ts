@@ -5,9 +5,12 @@ import type {
   Appointment,
   AppointmentStatus,
   CreateAppointmentInput,
+  DashboardOverview,
   LoyaltyAccount,
   LoyaltyTransaction,
   MembershipTier,
+  NotificationItem,
+  Promotion,
   Reward,
   RewardRedemption,
   Service,
@@ -85,6 +88,8 @@ const toVehicleFormData = (input: Partial<VehicleInput>) => {
   return data;
 };
 
+const unwrapList = async <T>(path: string) => (await request<T[]>(path)).data;
+
 export const authApi = {
   signIn: async (phone: string, password: string) =>
     (
@@ -156,6 +161,7 @@ export const usersApi = {
 export const servicesApi = {
   listActive: async () => (await request<Service[]>('/services/active?limit=100')).data,
   list: async () => (await request<Service[]>('/services?limit=100')).data,
+  getById: async (id: string) => (await request<Service>(`/services/${id}`)).data,
 };
 
 export const appointmentsApi = {
@@ -247,3 +253,24 @@ export const loyaltyApi = {
       })
     ).data.redemption,
 };
+
+export const promotionsApi = {
+  listActive: async () => unwrapList<Promotion>('/promotions/active?limit=100'),
+  getById: async (promotionId: string) =>
+    (await request<Promotion>(`/promotions/${promotionId}`)).data,
+};
+
+export const notificationsApi = {
+  listMy: async () => unwrapList<NotificationItem>('/notifications/me?limit=100'),
+  getUnreadCount: async () =>
+    (await request<{ unreadCount: number }>('/notifications/me/unread-count')).data.unreadCount,
+  markRead: async (notificationId: string) =>
+    (await request<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'PATCH' })).data,
+  markAllRead: async () =>
+    (await request<{ modifiedCount: number }>('/notifications/me/read-all', { method: 'PATCH' })).data,
+};
+
+export const dashboardApi = {
+  getOverview: async () => (await request<DashboardOverview>('/dashboard/overview')).data,
+};
+

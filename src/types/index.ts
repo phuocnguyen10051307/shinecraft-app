@@ -151,3 +151,53 @@ export interface RewardRedemption {
   redeemedAt?: string;
   usedAt?: string | null;
 }
+
+export interface NotificationItem {
+  _id: string;
+  title: string;
+  message: string;
+  type: 'appointment' | 'booking' | 'promotion' | 'maintenance' | 'loyalty' | 'system';
+  relatedModel?: string | null;
+  relatedId?: string | null;
+  isRead: boolean;
+  readAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Promotion {
+  _id: string;
+  title: string;
+  description?: string | null;
+  code: string;
+  type: 'percentage' | 'fixed_amount' | 'bonus_points' | 'free_service';
+  discountValue?: number | null;
+  bonusPoints?: number | null;
+  targetType: 'all' | 'membership_tier' | 'service';
+  membershipTierId?: MembershipTier | string | null;
+  serviceId?: Service | string | null;
+  startDate: string;
+  endDate: string;
+  usageLimit?: number | null;
+  usedCount?: number;
+  minSpend?: number;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DashboardOverview {
+  totalCustomers: number;
+  totalVehicles: number;
+  totalAppointments: number;
+  totalCompletedAppointments: number;
+  totalServicesCompleted: number;
+  totalActivePromotions: number;
+  totalLoyaltyMembers: number;
+  totalPointsIssued: number;
+  totalPointsRedeemed: number;
+  revenue: {
+    total: number;
+    source: string;
+  };
+}

@@ -7,7 +7,7 @@ import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
 import { serviceHistoriesApi } from '@/lib/api';
 import type { ServiceHistory } from '@/types';
 
-const money = (value: number) => `${value.toLocaleString('vi-VN')} \u0111`;
+const money = (value: number) => `${value.toLocaleString('vi-VN')} ₫`;
 
 export default function ServiceHistoriesScreen() {
   const { user, validateSession } = useAuth();
@@ -21,7 +21,7 @@ export default function ServiceHistoriesScreen() {
       setItems(await serviceHistoriesApi.list(user.role));
     } catch (error) {
       await validateSession();
-      Alert.alert('Kh\u00f4ng th\u1ec3 t\u1ea3i l\u1ecbch s\u1eed', getApiErrorMessage(error));
+      Alert.alert('Không thể tải lịch sử', getApiErrorMessage(error));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -30,7 +30,9 @@ export default function ServiceHistoriesScreen() {
 
   useEffect(() => {
     const task = Promise.resolve().then(load);
-    return () => { void task; };
+    return () => {
+      void task;
+    };
   }, [load]);
 
   const total = useMemo(() => items.reduce((sum, item) => sum + item.totalPrice, 0), [items]);
@@ -38,20 +40,39 @@ export default function ServiceHistoriesScreen() {
   return (
     <Screen
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />
-      }>
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            void load();
+          }}
+        />
+      }
+    >
       <View>
-        <Text style={styles.title}>L\u1ecbch s\u1eed d\u1ecbch v\u1ee5</Text>
-        <Text style={styles.subtitle}>D\u1eef li\u1ec7u \u0111\u01b0\u1ee3c \u0111\u1ed3ng b\u1ed9 tr\u1ef1c ti\u1ebfp v\u1edbi web v\u00e0 backend.</Text>
+        <Text style={styles.title}>Lịch sử dịch vụ</Text>
+        <Text style={styles.subtitle}>Dữ liệu được đồng bộ trực tiếp với web và backend.</Text>
       </View>
+
       <View style={styles.summary}>
-        <View><Text style={styles.summaryLabel}>T\u1ed5ng l\u1ecbch s\u1eed</Text><Text style={styles.summaryValue}>{items.length}</Text></View>
-        <View><Text style={styles.summaryLabel}>T\u1ed5ng gi\u00e1 tr\u1ecb</Text><Text style={styles.summaryValue}>{money(total)}</Text></View>
+        <View>
+          <Text style={styles.summaryLabel}>Tổng lịch sử</Text>
+          <Text style={styles.summaryValue}>{items.length}</Text>
+        </View>
+        <View>
+          <Text style={styles.summaryLabel}>Tổng giá trị</Text>
+          <Text style={styles.summaryValue}>{money(total)}</Text>
+        </View>
       </View>
-      {loading ? <ActivityIndicator color={colors.primary} size={'large'} /> : null}
+
+      {loading ? <ActivityIndicator color={colors.primary} size="large" /> : null}
+
       {!loading && !items.length ? (
-        <View style={styles.empty}><Text style={styles.emptyTitle}>Ch\u01b0a c\u00f3 l\u1ecbch s\u1eed d\u1ecbch v\u1ee5</Text></View>
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Chưa có lịch sử dịch vụ</Text>
+        </View>
       ) : null}
+
       {items.map((item) => (
         <View key={item._id} style={styles.card}>
           <View style={styles.row}>
@@ -59,12 +80,18 @@ export default function ServiceHistoriesScreen() {
             <Text style={styles.price}>{money(item.totalPrice)}</Text>
           </View>
           <Text style={styles.services}>{item.services.map((service) => service.nameSnapshot).join(', ')}</Text>
-          <Text style={styles.meta}>{item.vehicleId.brand} {item.vehicleId.model} \u00b7 {item.vehicleId.licensePlate}</Text>
-          {user?.role !== 'customer' ? <Text style={styles.meta}>Kh\u00e1ch h\u00e0ng: {item.customerId.displayName} \u00b7 {item.customerId.phone}</Text> : null}
+          <Text style={styles.meta}>{item.vehicleId.brand} {item.vehicleId.model} • {item.vehicleId.licensePlate}</Text>
+          {user?.role !== 'customer' ? (
+            <Text style={styles.meta}>Khách hàng: {item.customerId.displayName} • {item.customerId.phone}</Text>
+          ) : null}
           <Text style={styles.date}>{new Date(item.servicedAt).toLocaleString('vi-VN')}</Text>
-          {item.handledBy ? <Text style={styles.meta}>Ph\u1ee5 tr\u00e1ch: {item.handledBy.displayName}</Text> : null}
+          {item.handledBy ? <Text style={styles.meta}>Phụ trách: {item.handledBy.displayName}</Text> : null}
           {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
-          {item.nextMaintenanceDate ? <Text style={styles.maintenance}>B\u1ea3o d\u01b0\u1ee1ng ti\u1ebfp theo: {new Date(item.nextMaintenanceDate).toLocaleDateString('vi-VN')}</Text> : null}
+          {item.nextMaintenanceDate ? (
+            <Text style={styles.maintenance}>
+              Bảo dưỡng tiếp theo: {new Date(item.nextMaintenanceDate).toLocaleDateString('vi-VN')}
+            </Text>
+          ) : null}
         </View>
       ))}
     </Screen>
