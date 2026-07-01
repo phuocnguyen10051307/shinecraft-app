@@ -26,6 +26,15 @@ import type {
 } from '@/types';
 
 const timeSlots = ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00'];
+const appointmentFilters: { label: string; value: 'all' | 'upcoming' | AppointmentStatus }[] = [
+  { label: 'Tất cả', value: 'all' },
+  { label: 'Sắp tới', value: 'upcoming' },
+  { label: 'Chờ xác nhận', value: 'pending' },
+  { label: 'Đã xác nhận', value: 'confirmed' },
+  { label: 'Đang thực hiện', value: 'in_progress' },
+  { label: 'Hoàn thành', value: 'completed' },
+  { label: 'Đã hủy', value: 'cancelled' },
+];
 
 const statusConfig: Record<AppointmentStatus, { label: string; color: string; background: string }> = {
   pending: { label: 'Chờ xác nhận', color: colors.warning, background: '#fffaeb' },
@@ -77,7 +86,10 @@ export default function AppointmentsScreen() {
   const [cancelling, setCancelling] = useState(false);
   const [bookingVisible, setBookingVisible] = useState(false);
   const [cancelAppointment, setCancelAppointment] = useState<Appointment | null>(null);
-  const [filter, setFilter] = useState<'upcoming' | 'history'>('upcoming');
+  const [filter, setFilter] = useState<'all' | 'upcoming' | AppointmentStatus>('all');
+  const [keyword, setKeyword] = useState('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [currentTime, setCurrentTime] = useState(0);
 
   const handleError = useCallback(
     async (error: unknown, title: string) => {
@@ -95,6 +107,7 @@ export default function AppointmentsScreen() {
       if (!user) return;
       if (!quiet) setLoading(true);
       try {
+        setCurrentTime(new Date().getTime());
         setAppointments(await appointmentsApi.list(user.role));
       } catch (error) {
         await handleError(error, 'Không tải được lịch hẹn');
@@ -132,15 +145,39 @@ export default function AppointmentsScreen() {
     };
   }, [loadAppointments, loadBookingOptions]);
 
-  const filteredAppointments = useMemo(
-    () =>
-      appointments.filter((appointment) =>
-        filter === 'history'
-          ? ['completed', 'cancelled'].includes(appointment.status)
-          : !['completed', 'cancelled'].includes(appointment.status),
-      ),
-    [appointments, filter],
-  );
+  const filteredAppointments = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+
+    return appointments
+      .filter((appointment) => {
+        const isUpcoming =
+          new Date(appointment.scheduledAt).getTime() >= currentTime &&
+          !['completed', 'cancelled'].includes(appointment.status);
+        const matchesFilter =
+          filter === 'all' ? true : filter === 'upcoming' ? isUpcoming : appointment.status === filter;
+
+        if (!matchesFilter) return false;
+        if (!normalizedKeyword) return true;
+
+        const searchContent = [
+          appointment.vehicleId.brand,
+          appointment.vehicleId.model,
+          appointment.vehicleId.licensePlate,
+          appointment.note,
+          statusConfig[appointment.status].label,
+          ...appointment.services.map((service) => service.nameSnapshot),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return searchContent.includes(normalizedKeyword);
+      })
+      .sort((a, b) => {
+        const diff = new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+        return sortOrder === 'asc' ? diff : -diff;
+      });
+  }, [appointments, currentTime, filter, keyword, sortOrder]);
 
   const openBooking = async () => {
     if (user?.role !== 'customer') return;
@@ -233,20 +270,39 @@ export default function AppointmentsScreen() {
           />
         </View>
 
-        <View style={styles.segment}>
-          {[
-            ['upcoming', 'Sắp tới'],
-            ['history', 'Lịch sử'],
-          ].map(([value, label]) => (
-            <Pressable
-              key={value}
-              onPress={() => setFilter(value as 'upcoming' | 'history')}
-              style={[styles.segmentButton, filter === value && styles.segmentButtonActive]}>
-              <Text style={[styles.segmentText, filter === value && styles.segmentTextActive]}>
-                {label}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={styles.filterPanel}>
+          <TextInput
+            value={keyword}
+            onChangeText={setKeyword}
+            placeholder="Tìm theo dịch vụ, biển số hoặc ghi chú..."
+            placeholderTextColor="#98a2b3"
+            style={styles.searchInput}
+          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {appointmentFilters.map((item) => (
+              <Pressable
+                key={item.value}
+                onPress={() => setFilter(item.value)}
+                style={[styles.filterChip, filter === item.value && styles.filterChipActive]}>
+                <Text style={[styles.filterChipText, filter === item.value && styles.filterChipTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <View style={styles.sortRow}>
+            {[
+              ['desc', 'Mới nhất'],
+              ['asc', 'Cũ nhất'],
+            ].map(([value, label]) => (
+              <Pressable
+                key={value}
+                onPress={() => setSortOrder(value as 'asc' | 'desc')}
+                style={[styles.sortButton, sortOrder === value && styles.sortButtonActive]}>
+                <Text style={[styles.sortText, sortOrder === value && styles.sortTextActive]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
 
         {loading ? (
@@ -264,7 +320,7 @@ export default function AppointmentsScreen() {
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Chưa có lịch hẹn</Text>
             <Text style={styles.emptyText}>
-              Các lịch hẹn {filter === 'history' ? 'đã hoàn tất' : 'sắp tới'} sẽ xuất hiện tại đây.
+              Không tìm thấy lịch hẹn phù hợp với bộ lọc hiện tại.
             </Text>
           </View>
         )}
@@ -735,11 +791,18 @@ const styles = StyleSheet.create({
   stat: { flex: 1, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   statValue: { fontSize: 22, fontWeight: '900' },
   statLabel: { color: colors.muted, fontSize: 10, marginTop: 4 },
-  segment: { flexDirection: 'row', padding: 4, borderRadius: 14, backgroundColor: '#e9edf3' },
-  segmentButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 11 },
-  segmentButtonActive: { backgroundColor: colors.surface },
-  segmentText: { color: colors.muted, fontWeight: '700' },
-  segmentTextActive: { color: colors.ink, fontWeight: '900' },
+  filterPanel: { padding: 14, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 12 },
+  searchInput: { minHeight: 46, borderRadius: 12, backgroundColor: colors.background, paddingHorizontal: 14, color: colors.ink, fontSize: 15 },
+  chipRow: { gap: 8, paddingRight: 4 },
+  filterChip: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 999, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  filterChipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
+  filterChipText: { color: colors.muted, fontSize: 12, fontWeight: '800' },
+  filterChipTextActive: { color: '#fff' },
+  sortRow: { flexDirection: 'row', gap: 8 },
+  sortButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 11, backgroundColor: colors.background },
+  sortButtonActive: { backgroundColor: colors.tint },
+  sortText: { color: colors.muted, fontWeight: '800' },
+  sortTextActive: { color: colors.primary },
   loader: { paddingVertical: 50 },
   card: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 8 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },

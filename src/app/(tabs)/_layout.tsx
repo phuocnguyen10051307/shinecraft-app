@@ -10,12 +10,11 @@ export default function ProtectedTabsLayout() {
   const { user, isBootstrapping } = useAuth();
   if (!isBootstrapping && !user) return <Redirect href={'/login'} />;
   return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.primary, tabBarInactiveTintColor: colors.muted, tabBarStyle: styles.tabBar, tabBarLabelStyle: styles.label }}>
-    <Tabs.Screen name={'index'} options={{ title: 'Tong quan', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'house.fill', android: 'home', web: 'home' }} /> }} />
+    <Tabs.Screen name={'index'} options={{ title: 'Tổng quan', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'house.fill', android: 'home', web: 'home' }} /> }} />
     <Tabs.Screen name={'vehicles'} options={{ href: user?.role === 'customer' ? undefined : null, title: 'Xe', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'car.fill', android: 'directions_car', web: 'directions_car' }} /> }} />
-    <Tabs.Screen name={'appointments'} options={{ title: 'Lich hen', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }} /> }} />
-    <Tabs.Screen name={'service-histories'} options={{ title: 'Lich su', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} /> }} />
+    <Tabs.Screen name={'appointments'} options={{ title: 'Lịch hẹn', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }} /> }} />
     <Tabs.Screen name={'loyalty'} options={{ href: user?.role === 'customer' ? undefined : null, title: 'Loyalty', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'gift.fill', android: 'redeem', web: 'redeem' }} /> }} />
-    <Tabs.Screen name={'profile'} options={{ title: 'Tai khoan', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'person.crop.circle.fill', android: 'person', web: 'person' }} /> }} />
+    <Tabs.Screen name={'profile'} options={{ title: 'Tài khoản', tabBarIcon: ({ color }) => <TabIcon color={color} name={{ ios: 'person.crop.circle.fill', android: 'person', web: 'person' }} /> }} />
   </Tabs>;
 }
 

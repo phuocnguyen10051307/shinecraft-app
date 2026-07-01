@@ -87,22 +87,6 @@ export interface CreateAppointmentInput {
   note?: string;
 }
 
-export interface ServiceHistory {
-  _id: string;
-  customerId: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
-  vehicleId: Vehicle;
-  appointmentId: Pick<Appointment, '_id' | 'status' | 'scheduledAt' | 'completedAt' | 'paymentStatus'>;
-  services: AppointmentServiceSnapshot[];
-  totalPrice: number;
-  totalEstimatedDuration: number;
-  servicedAt: string;
-  handledBy: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'> | null;
-  note?: string;
-  nextMaintenanceDate?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
 export interface MembershipTier {
   _id: string;
   name: string;

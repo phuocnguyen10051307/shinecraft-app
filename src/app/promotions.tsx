@@ -242,7 +242,7 @@ export default function PromotionsScreen() {
 
           <Text style={styles.cardTitle}>{item.title}</Text>
 
-          <Text style={styles.cardText}>{item.description || 'Ưu đãi dịch vụ dnh cho khch hng ph h?p.'}</Text>
+          <Text style={styles.cardText}>{item.description || 'Ưu đãi dịch vụ dành cho khách hàng phù hợp.'}</Text>
 
           <View style={styles.metaBlock}>
 

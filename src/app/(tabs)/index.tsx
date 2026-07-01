@@ -30,6 +30,8 @@ import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
 
 import {
 
+  ApiError,
+
   appointmentsApi,
 
   dashboardApi,
@@ -40,11 +42,9 @@ import {
 
   promotionsApi,
 
-  serviceHistoriesApi,
-
 } from '@/lib/api';
 
-import type { Appointment, DashboardOverview, LoyaltyAccount, Promotion, ServiceHistory } from '@/types';
+import type { Appointment, DashboardOverview, LoyaltyAccount, Promotion } from '@/types';
 
 
 
@@ -78,7 +78,6 @@ function formatSchedule(value?: string) {
 
 const appointmentsPath = '/appointments' as Href;
 
-const serviceHistoriesPath = '/service-histories' as Href;
 
 const profilePath = '/profile' as Href;
 
@@ -98,8 +97,6 @@ export default function HomeScreen() {
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
-  const [serviceHistories, setServiceHistories] = useState<ServiceHistory[]>([]);
-
   const [loyaltyAccount, setLoyaltyAccount] = useState<LoyaltyAccount | null>(null);
 
   const [promotions, setPromotions] = useState<Promotion[]>([]);
@@ -118,15 +115,13 @@ export default function HomeScreen() {
 
     try {
 
-      const baseTasks = [appointmentsApi.list(user.role), serviceHistoriesApi.list(user.role)] as const;
-
 
 
       if (user.role === 'customer') {
 
-        const [nextAppointments, nextHistories, nextAccount, nextPromotions, nextUnreadNotifications] = await Promise.all([
+        const [nextAppointments, nextAccount, nextPromotions, nextUnreadNotifications] = await Promise.all([
 
-          ...baseTasks,
+          appointmentsApi.list(user.role),
 
           loyaltyApi.getMyAccount(),
 
@@ -140,8 +135,6 @@ export default function HomeScreen() {
 
         setAppointments(nextAppointments);
 
-        setServiceHistories(nextHistories);
-
         setLoyaltyAccount(nextAccount);
 
         setPromotions(nextPromotions);
@@ -152,9 +145,9 @@ export default function HomeScreen() {
 
       } else if (user.role === 'admin') {
 
-        const [nextAppointments, nextHistories, nextOverview] = await Promise.all([
+        const [nextAppointments, nextOverview] = await Promise.all([
 
-          ...baseTasks,
+          appointmentsApi.list(user.role),
 
           dashboardApi.getOverview(),
 
@@ -163,8 +156,6 @@ export default function HomeScreen() {
 
 
         setAppointments(nextAppointments);
-
-        setServiceHistories(nextHistories);
 
         setDashboardOverview(nextOverview);
 
@@ -176,11 +167,9 @@ export default function HomeScreen() {
 
       } else {
 
-        const [nextAppointments, nextHistories] = await Promise.all(baseTasks);
+        const nextAppointments = await appointmentsApi.list(user.role);
 
         setAppointments(nextAppointments);
-
-        setServiceHistories(nextHistories);
 
         setDashboardOverview(null);
 
@@ -191,10 +180,12 @@ export default function HomeScreen() {
         setUnreadNotifications(0);
 
       }
-
     } catch (error) {
 
-      await validateSession();
+      if (error instanceof ApiError && error.status === 401) {
+        await validateSession();
+        return;
+      }
 
       Alert.alert('Không thể tải dữ liệu', getApiErrorMessage(error));
 
@@ -240,22 +231,6 @@ export default function HomeScreen() {
 
   );
 
-
-
-  const latestServiceHistory = useMemo(
-
-    () =>
-
-      [...serviceHistories]
-
-        .sort((a, b) => new Date(b.servicedAt).getTime() - new Date(a.servicedAt).getTime())[0] ?? null,
-
-    [serviceHistories],
-
-  );
-
-
-
   const heroTitle =
 
     user?.role === 'admin'
@@ -264,7 +239,7 @@ export default function HomeScreen() {
 
       : user?.role === 'staff'
 
-        ? 'Theo dõi lịch được giao thật nhanh'
+        ? 'Tap trung vao lich hen ban dang phu trach.'
 
         : 'Xe sạch hơn, lịch hẹn rõ hơn';
 
@@ -350,7 +325,7 @@ export default function HomeScreen() {
 
             <Pressable onPress={() => router.push(notificationsPath)} style={styles.heroButtonSecondary}>
 
-              <Text style={styles.heroButtonSecondaryText}>Thng bo</Text>
+              <Text style={styles.heroButtonSecondaryText}>Thông báo</Text>
 
             </Pressable>
 
@@ -380,7 +355,7 @@ export default function HomeScreen() {
 
               ? loyaltyAccount?.currentPoints ?? 0
 
-              : dashboardOverview?.totalServicesCompleted ?? serviceHistories.length,
+              : dashboardOverview?.totalServicesCompleted ?? appointments.filter((appointment) => appointment.status === 'completed').length,
 
           )}
 
@@ -424,15 +399,6 @@ export default function HomeScreen() {
 
         />
 
-        <QuickAction
-
-          title="Lịch sử dịch vụ"
-
-          description="Xem những lần chăm sóc xe gần đây."
-
-          onPress={() => router.push(serviceHistoriesPath)}
-
-        />
 
         {user?.role === 'customer' ? (
 
@@ -440,7 +406,7 @@ export default function HomeScreen() {
 
             <QuickAction
 
-              title="Thng bo"
+              title="Thông báo"
 
               description={unreadNotifications ? `${unreadNotifications} thông báo chưa đọc.` : 'Không có thông báo mới.'}
 
@@ -526,7 +492,7 @@ export default function HomeScreen() {
 
         title={user?.role === 'customer' ? 'Tổng quan tài khoản' : 'Cập nhật gần nhất'}
 
-        caption={user?.role === 'customer' ? 'Thông tin loyalty và lịch sử chăm sóc gần đây.' : 'Một số chỉ số để bạn nắm tình hình nhanh.'}
+        caption={user?.role === 'customer' ? 'Thong tin loyalty va uu dai gan day.' : 'Mot so chi so de ban nam tinh hinh nhanh.'}
 
       />
 
@@ -552,9 +518,8 @@ export default function HomeScreen() {
 
           />
 
-          <InfoRow label="Uu di dang c" value={String(promotions.length)} />
+          <InfoRow label="Ưu đãi đang có" value={String(promotions.length)} />
 
-          <InfoRow label="Lần chăm xe gần nhất" value={formatSchedule(latestServiceHistory?.servicedAt)} />
 
         </View>
 
@@ -562,7 +527,7 @@ export default function HomeScreen() {
 
         <View style={styles.infoPanel}>
 
-          <InfoRow label="Khch hng" value={String(dashboardOverview.totalCustomers)} />
+          <InfoRow label="Khách hàng" value={String(dashboardOverview.totalCustomers)} />
 
           <InfoRow label="Xe đang quản lý" value={String(dashboardOverview.totalVehicles)} />
 
@@ -576,9 +541,8 @@ export default function HomeScreen() {
 
           <InfoRow label="Lịch đang mở" value={String(upcomingAppointments.length)} />
 
-          <InfoRow label="Lịch sử được giao" value={String(serviceHistories.length)} />
+          <InfoRow label="Lich da hoan thanh" value={String(appointments.filter((appointment) => appointment.status === 'completed').length)} />
 
-          <InfoRow label="Lần cập nhật cuối" value={formatSchedule(latestServiceHistory?.servicedAt)} />
 
         </View>
 

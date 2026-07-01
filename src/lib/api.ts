@@ -14,7 +14,6 @@ import type {
   Reward,
   RewardRedemption,
   Service,
-  ServiceHistory,
   User,
   Vehicle,
   VehicleInput,
@@ -218,26 +217,6 @@ export const appointmentsApi = {
     ).data,
 };
 
-export const serviceHistoriesApi = {
-  list: async (role: User['role']) => {
-    const path =
-      role === 'admin'
-        ? '/service-histories?limit=100'
-        : role === 'staff'
-          ? '/service-histories/staff/my?limit=100'
-          : '/service-histories/my?limit=100';
-    return (await request<ServiceHistory[]>(path)).data;
-  },
-  update: async (id: string, input: { note?: string; nextMaintenanceDate?: string }) =>
-    (
-      await request<ServiceHistory>(`/service-histories/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(input),
-      })
-    ).data,
-  remove: async (id: string) => request(`/service-histories/${id}`, { method: 'DELETE' }),
-};
-
 export const loyaltyApi = {
   getMyAccount: async () => (await request<LoyaltyAccount>('/loyalty/me')).data,
   getMyTransactions: async () =>
@@ -261,9 +240,22 @@ export const promotionsApi = {
 };
 
 export const notificationsApi = {
-  listMy: async () => unwrapList<NotificationItem>('/notifications/me?limit=100'),
-  getUnreadCount: async () =>
-    (await request<{ unreadCount: number }>('/notifications/me/unread-count')).data.unreadCount,
+  listMy: async () => {
+    try {
+      return await unwrapList<NotificationItem>('/notifications/me?limit=100');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return [];
+      throw error;
+    }
+  },
+  getUnreadCount: async () => {
+    try {
+      return (await request<{ unreadCount: number }>('/notifications/me/unread-count')).data.unreadCount;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return 0;
+      throw error;
+    }
+  },
   markRead: async (notificationId: string) =>
     (await request<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'PATCH' })).data,
   markAllRead: async () =>

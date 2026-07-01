@@ -182,11 +182,11 @@ export default function NotificationsScreen() {
 
         <View style={styles.empty}>
 
-          <Text style={styles.emptyTitle}>Mn ny dnh cho khch hng</Text>
+          <Text style={styles.emptyTitle}>Màn này dành cho khách hàng</Text>
 
           <Text style={styles.emptyText}>
 
-            Hi?n t?i thng bo c nhn trn app mobile ch? m? cho ti kho?n customer.
+            Hiện tại thông báo cá nhân trên app mobile chỉ mở cho tài khoản customer.
 
           </Text>
 
@@ -234,7 +234,7 @@ export default function NotificationsScreen() {
 
       <View style={styles.header}>
 
-        <Text style={styles.title}>Thng bo</Text>
+        <Text style={styles.title}>Thông báo</Text>
 
         <Text style={styles.subtitle}>Cập nhật mới từ lịch hẹn, loyalty và khuyến mãi.</Text>
 
@@ -286,7 +286,7 @@ export default function NotificationsScreen() {
 
         <View style={styles.empty}>
 
-          <Text style={styles.emptyTitle}>Chua c thng bo</Text>
+          <Text style={styles.emptyTitle}>Chưa có thông báo</Text>
 
           <Text style={styles.emptyText}>Khi có cập nhật mới từ hệ thống, bạn sẽ thấy ở đây.</Text>
 

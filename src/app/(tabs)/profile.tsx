@@ -20,7 +20,6 @@ import { usersApi } from '@/lib/api';
 
 const appointmentsPath = '/appointments' as Href;
 
-const serviceHistoriesPath = '/service-histories' as Href;
 
 const notificationsPath = '/notifications' as Href;
 
@@ -124,13 +123,12 @@ export default function ProfileScreen() {
 
         <QuickAction title="Lịch hẹn" onPress={() => router.push(appointmentsPath)} />
 
-        <QuickAction title="Lịch sử" onPress={() => router.push(serviceHistoriesPath)} />
 
         {user?.role === 'customer' ? (
 
           <>
 
-            <QuickAction title="Thng bo" onPress={() => router.push(notificationsPath)} />
+            <QuickAction title="Thông báo" onPress={() => router.push(notificationsPath)} />
 
             <QuickAction title="Khuyến mãi" onPress={() => router.push(promotionsPath)} />
 
@@ -144,7 +142,7 @@ export default function ProfileScreen() {
 
       <View style={styles.card}>
 
-        <Text style={styles.cardTitle}>Thng tin c nhn</Text>
+        <Text style={styles.cardTitle}>Thông tin cá nhân</Text>
 
         <FormField label="Tên hiển thị" value={displayName} onChangeText={setDisplayName} />
 
