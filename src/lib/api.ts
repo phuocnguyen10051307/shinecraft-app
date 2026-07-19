@@ -14,6 +14,7 @@ import type {
   Reward,
   RewardRedemption,
   Service,
+  ServiceHistory,
   User,
   Vehicle,
   VehicleInput,
@@ -239,6 +240,17 @@ export const promotionsApi = {
     (await request<Promotion>(`/promotions/${promotionId}`)).data,
 };
 
+export const serviceHistoriesApi = {
+  listMine: async (vehicleId?: string) => {
+    const path = vehicleId
+      ? `/service-histories/my/vehicles/${vehicleId}?limit=100`
+      : '/service-histories/my?limit=100';
+    return (await request<ServiceHistory[]>(path)).data;
+  },
+  getMineById: async (serviceHistoryId: string) =>
+    (await request<ServiceHistory>(`/service-histories/my/${serviceHistoryId}`)).data,
+};
+
 export const notificationsApi = {
   listMy: async () => {
     try {
@@ -265,4 +277,6 @@ export const notificationsApi = {
 export const dashboardApi = {
   getOverview: async () => (await request<DashboardOverview>('/dashboard/overview')).data,
 };
+
+
 

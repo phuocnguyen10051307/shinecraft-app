@@ -80,6 +80,38 @@ export interface Appointment {
   updatedAt?: string;
 }
 
+export interface ServiceHistoryServiceSnapshot {
+  serviceId: string;
+  nameSnapshot: string;
+  priceSnapshot: number;
+  estimatedDurationSnapshot: number;
+}
+
+export interface ServiceHistoryAppointmentSummary {
+  _id: string;
+  status: AppointmentStatus;
+  scheduledAt?: string | null;
+  completedAt?: string | null;
+  paymentStatus?: 'unpaid' | 'paid' | 'refunded';
+}
+
+export interface ServiceHistory {
+  _id: string;
+  customerId: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
+  vehicleId: Pick<Vehicle, '_id' | 'brand' | 'model' | 'licensePlate' | 'year'>;
+  appointmentId: ServiceHistoryAppointmentSummary;
+  services: ServiceHistoryServiceSnapshot[];
+  totalPrice: number;
+  totalEstimatedDuration: number;
+  servicedAt: string;
+  handledBy: Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'> | null;
+  note?: string;
+  nextMaintenanceDate?: string | null;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface CreateAppointmentInput {
   vehicleId: string;
   services: { serviceId: string }[];
