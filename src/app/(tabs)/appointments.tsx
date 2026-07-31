@@ -16,12 +16,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Screen } from '@/components/screen';
 import { colors } from '@/constants/shinecraft-theme';
 import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
-import { ApiError, appointmentsApi, servicesApi, vehiclesApi } from '@/lib/api';
+import { ApiError, appointmentsApi, promotionsApi, serviceCategoriesApi, servicesApi, vehiclesApi } from '@/lib/api';
 import type {
   Appointment,
   AppointmentStatus,
+  AppointmentServiceSnapshot,
   CreateAppointmentInput,
+  Promotion,
   Service,
+  ServiceCategory,
   Vehicle,
 } from '@/types';
 
@@ -44,6 +47,17 @@ const statusConfig: Record<AppointmentStatus, { label: string; color: string; ba
   cancelled: { label: 'Đã hủy', color: colors.danger, background: '#fef3f2' },
 };
 
+const fallbackStatusConfig = {
+  label: 'Không rõ trạng thái',
+  color: '#344054',
+  background: '#f2f4f7',
+};
+
+function getStatusConfig(status?: string | null) {
+  if (!status) return fallbackStatusConfig;
+  return status in statusConfig ? statusConfig[status as AppointmentStatus] : fallbackStatusConfig;
+}
+
 function createBookingDates(count = 14) {
   return Array.from({ length: count }, (_, index) => {
     const date = new Date();
@@ -63,22 +77,105 @@ function createBookingDates(count = 14) {
   });
 }
 
-function formatCurrency(value: number) {
+function formatCurrency(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Chưa có giá';
   return `${value.toLocaleString('vi-VN')} đ`;
 }
 
-function formatDuration(minutes: number) {
+function formatDuration(minutes?: number | null) {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return 'Chưa rõ thời lượng';
   if (minutes < 60) return `${minutes} phút`;
   const hours = Math.floor(minutes / 60);
   const remaining = minutes % 60;
   return remaining ? `${hours} giờ ${remaining} phút` : `${hours} giờ`;
 }
+function asNumber(value: unknown) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function getServiceName(service: AppointmentServiceSnapshot) {
+  const candidate = service as AppointmentServiceSnapshot & { name?: string; serviceId?: { name?: string } };
+  return candidate.nameSnapshot || candidate.name || candidate.serviceId?.name || '';
+}
+
+function getServicePrice(service: AppointmentServiceSnapshot) {
+  const candidate = service as AppointmentServiceSnapshot & { price?: number; serviceId?: { price?: number } };
+  return asNumber(candidate.priceSnapshot ?? candidate.price ?? candidate.serviceId?.price) ?? 0;
+}
+
+function getServiceDuration(service: AppointmentServiceSnapshot) {
+  const candidate = service as AppointmentServiceSnapshot & { estimatedDuration?: number; serviceId?: { estimatedDuration?: number } };
+  return asNumber(candidate.estimatedDurationSnapshot ?? candidate.estimatedDuration ?? candidate.serviceId?.estimatedDuration) ?? 0;
+}
+
+function getAppointmentPrice(appointment: Appointment) {
+  const candidate = appointment as Appointment & { finalAmount?: number | null; totalAmount?: number | null };
+  return (
+    asNumber(candidate.finalAmount) ??
+    asNumber(candidate.totalPrice) ??
+    asNumber(candidate.totalAmount) ??
+    asNumber(candidate.subtotalPrice) ??
+    (appointment.services ?? []).reduce((total, service) => total + getServicePrice(service), 0)
+  );
+}
+
+function getAppointmentDuration(appointment: Appointment) {
+  return (
+    asNumber(appointment.totalEstimatedDuration) ??
+    (appointment.services ?? []).reduce((total, service) => total + getServiceDuration(service), 0)
+  );
+}
+
+function getPromotionReferenceId(reference: Promotion['serviceId']) {
+  if (!reference) return '';
+  return typeof reference === 'string' ? reference : reference._id;
+}
+
+function getPromotionLabel(promotion: Promotion) {
+  if (promotion.type === 'percentage') return `${promotion.code} - Giảm ${promotion.discountValue ?? 0}%`;
+  if (promotion.type === 'fixed_amount') {
+    return `${promotion.code} - Giảm ${formatCurrency(Number(promotion.discountValue ?? 0))}`;
+  }
+  if (promotion.type === 'bonus_points') return `${promotion.code} - Tặng ${promotion.bonusPoints ?? 0} điểm`;
+  return `${promotion.code} - Miễn phí dịch vụ áp dụng`;
+}
+
+function calculatePromotionDiscount(promotion: Promotion, subtotal: number, selectedServices: Service[]) {
+  if (subtotal <= 0) return 0;
+
+  if (promotion.type === 'percentage') {
+    const discountBase =
+      promotion.targetType === 'service'
+        ? selectedServices
+            .filter((service) => service._id === getPromotionReferenceId(promotion.serviceId))
+            .reduce((total, service) => total + service.price, 0)
+        : subtotal;
+    const rawDiscount = Math.round((discountBase * Number(promotion.discountValue ?? 0)) / 100);
+    return Math.min(subtotal, promotion.maxDiscountAmount ? Math.min(rawDiscount, promotion.maxDiscountAmount) : rawDiscount);
+  }
+
+  if (promotion.type === 'fixed_amount') {
+    return Math.min(subtotal, Math.round(Number(promotion.discountValue ?? 0)));
+  }
+
+  if (promotion.type === 'free_service') {
+    const serviceId = getPromotionReferenceId(promotion.serviceId);
+    const targetService = selectedServices.find((service) => service._id === serviceId);
+    return targetService ? Math.min(subtotal, targetService.price) : 0;
+  }
+
+  return 0;
+}
+
 
 export default function AppointmentsScreen() {
   const { user, validateSession } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(false);
@@ -123,12 +220,16 @@ export default function AppointmentsScreen() {
     if (!user || user.role !== 'customer') return;
     setOptionsLoading(true);
     try {
-      const [nextVehicles, nextServices] = await Promise.all([
+      const [nextVehicles, nextServices, nextCategories, nextPromotions] = await Promise.all([
         vehiclesApi.list(user.role),
         servicesApi.listActive(),
+        serviceCategoriesApi.listActive(),
+        promotionsApi.listActive(),
       ]);
       setVehicles(nextVehicles);
       setServices(nextServices);
+      setCategories(nextCategories);
+      setPromotions(nextPromotions);
     } catch (error) {
       await handleError(error, 'Không tải được dữ liệu đặt lịch');
     } finally {
@@ -145,10 +246,15 @@ export default function AppointmentsScreen() {
     };
   }, [loadAppointments, loadBookingOptions]);
 
+  const validAppointments = useMemo(
+    () => appointments.filter((appointment) => appointment?._id && appointment.vehicleId && appointment.services?.length),
+    [appointments],
+  );
+
   const filteredAppointments = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
 
-    return appointments
+    return validAppointments
       .filter((appointment) => {
         const isUpcoming =
           new Date(appointment.scheduledAt).getTime() >= currentTime &&
@@ -164,8 +270,8 @@ export default function AppointmentsScreen() {
           appointment.vehicleId.model,
           appointment.vehicleId.licensePlate,
           appointment.note,
-          statusConfig[appointment.status].label,
-          ...appointment.services.map((service) => service.nameSnapshot),
+          getStatusConfig(appointment.status).label,
+          ...(appointment.services ?? []).map(getServiceName),
         ]
           .filter(Boolean)
           .join(' ')
@@ -177,7 +283,7 @@ export default function AppointmentsScreen() {
         const diff = new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
         return sortOrder === 'asc' ? diff : -diff;
       });
-  }, [appointments, currentTime, filter, keyword, sortOrder]);
+  }, [currentTime, filter, keyword, sortOrder, validAppointments]);
 
   const openBooking = async () => {
     if (user?.role !== 'customer') return;
@@ -190,9 +296,9 @@ export default function AppointmentsScreen() {
   const createAppointment = async (input: CreateAppointmentInput) => {
     setSaving(true);
     try {
-      const created = await appointmentsApi.create(input);
-      setAppointments((current) => [created, ...current]);
+      await appointmentsApi.create(input);
       setBookingVisible(false);
+      await loadAppointments(true);
       Alert.alert('Đặt lịch thành công', 'Lịch hẹn đang chờ gara xác nhận.');
     } catch (error) {
       await handleError(error, 'Không thể đặt lịch');
@@ -257,14 +363,14 @@ export default function AppointmentsScreen() {
         ) : null}
 
         <View style={styles.stats}>
-          <Stat value={String(appointments.length)} label="Tổng lịch hẹn" />
+          <Stat value={String(validAppointments.length)} label="Tổng lịch hẹn" />
           <Stat
-            value={String(appointments.filter((item) => item.status === 'pending').length)}
+            value={String(validAppointments.filter((item) => item.status === 'pending').length)}
             label="Chờ xác nhận"
             accent={colors.warning}
           />
           <Stat
-            value={String(appointments.filter((item) => item.status === 'confirmed').length)}
+            value={String(validAppointments.filter((item) => item.status === 'confirmed').length)}
             label="Đã xác nhận"
             accent={colors.success}
           />
@@ -308,9 +414,9 @@ export default function AppointmentsScreen() {
         {loading ? (
           <ActivityIndicator color={colors.primary} size="large" style={styles.loader} />
         ) : filteredAppointments.length ? (
-          filteredAppointments.map((appointment) => (
+          filteredAppointments.map((appointment, index) => (
             <AppointmentCard
-              key={appointment._id}
+              key={appointment._id ?? appointment.scheduledAt ?? String(index)}
               appointment={appointment}
               allowCancel={user?.role === 'customer'}
               onCancel={setCancelAppointment}
@@ -330,6 +436,8 @@ export default function AppointmentsScreen() {
         <BookingModal
           vehicles={vehicles}
           services={services}
+          categories={categories}
+          promotions={promotions}
           loading={optionsLoading}
           saving={saving}
           onClose={() => setBookingVisible(false)}
@@ -359,40 +467,43 @@ function AppointmentCard({
   allowCancel: boolean;
   onCancel: (appointment: Appointment) => void;
 }) {
-  const status = statusConfig[appointment.status];
+  const status = getStatusConfig(appointment.status);
+  const appointmentCode = appointment._id ? appointment._id.slice(-8).toUpperCase() : 'CHƯA CÓ MÃ';
+  const services = appointment.services ?? [];
+  const serviceTitle = services.map(getServiceName).filter(Boolean).join(', ') || 'Chưa có dịch vụ';
+  const vehicle = appointment.vehicleId;
+  const vehicleLine = vehicle
+    ? `${vehicle.brand ?? 'Xe'} ${vehicle.model ?? ''} - ${vehicle.licensePlate ?? 'Chưa có biển số'}`
+    : 'Xe - Chưa có biển số';
+  const appointmentPrice = getAppointmentPrice(appointment);
+  const appointmentDuration = getAppointmentDuration(appointment);
   const canCancel =
-    allowCancel && (appointment.status === 'pending' || appointment.status === 'confirmed');
-  const scheduledAt = new Date(appointment.scheduledAt);
+    Boolean(appointment._id) && allowCancel && appointment.status === 'pending';
+  const scheduledAt = appointment.scheduledAt ? new Date(appointment.scheduledAt) : null;
+  const scheduleText =
+    scheduledAt && !Number.isNaN(scheduledAt.getTime())
+      ? `${scheduledAt.toLocaleDateString('vi-VN')} ${scheduledAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`
+      : 'Chưa có thời gian';
 
   return (
     <View style={styles.card}>
       <View style={styles.cardTop}>
-        <Text style={styles.code}>#{appointment._id.slice(-8).toUpperCase()}</Text>
+        <Text style={styles.code}>#{appointmentCode}</Text>
         <View style={[styles.badge, { backgroundColor: status.background }]}>
           <Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text>
         </View>
       </View>
-      <Text style={styles.serviceName}>
-        {appointment.services.map((item) => item.nameSnapshot).join(', ')}
-      </Text>
-      <Text style={styles.vehicleText}>
-        {appointment.vehicleId.brand} {appointment.vehicleId.model} ·{' '}
-        {appointment.vehicleId.licensePlate}
-      </Text>
+      <Text style={styles.serviceName}>{serviceTitle}</Text>
+      <Text style={styles.vehicleText}>{vehicleLine}</Text>
       <View style={styles.scheduleRow}>
         <View style={styles.scheduleCopy}>
           <Text style={styles.metaLabel}>THỜI GIAN</Text>
-          <Text style={styles.metaValue}>
-            {scheduledAt.toLocaleDateString('vi-VN')} ·{' '}
-            {scheduledAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-          <Text style={styles.durationText}>
-            Dự kiến {formatDuration(appointment.totalEstimatedDuration)}
-          </Text>
+          <Text style={styles.metaValue}>{scheduleText}</Text>
+          <Text style={styles.durationText}>Dự kiến {formatDuration(appointmentDuration)}</Text>
         </View>
         <View style={styles.priceWrap}>
           <Text style={styles.metaLabel}>TẠM TÍNH</Text>
-          <Text style={styles.price}>{formatCurrency(appointment.totalPrice)}</Text>
+          <Text style={styles.price}>{formatCurrency(appointmentPrice)}</Text>
         </View>
       </View>
       {appointment.note ? <Text style={styles.appointmentNote}>{appointment.note}</Text> : null}
@@ -408,6 +519,8 @@ function AppointmentCard({
 function BookingModal({
   vehicles,
   services,
+  categories,
+  promotions,
   loading,
   saving,
   onClose,
@@ -416,6 +529,8 @@ function BookingModal({
 }: {
   vehicles: Vehicle[];
   services: Service[];
+  categories: ServiceCategory[];
+  promotions: Promotion[];
   loading: boolean;
   saving: boolean;
   onClose: () => void;
@@ -423,32 +538,93 @@ function BookingModal({
   onRetry: () => Promise<void>;
 }) {
   const dates = useMemo(() => createBookingDates(), []);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
   const [vehicleId, setVehicleId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [serviceIds, setServiceIds] = useState<string[]>([]);
+  const [promotionId, setPromotionId] = useState('');
   const [scheduledDate, setScheduledDate] = useState(dates[0].value);
   const [scheduledTime, setScheduledTime] = useState('09:00');
   const [note, setNote] = useState('');
 
   const selectedVehicle = vehicles.find((vehicle) => vehicle._id === vehicleId);
-  const filteredServices = selectedVehicle
-    ? services.filter((service) => service.vehicleType === selectedVehicle.type)
-    : [];
-  const selectedServices = services.filter((service) => serviceIds.includes(service._id));
-  const totalPrice = selectedServices.reduce((total, service) => total + service.price, 0);
-  const totalDuration = selectedServices.reduce(
-    (total, service) => total + service.estimatedDuration,
-    0,
+  const availableCategories = useMemo(() => {
+    const nextCategories = new Map<string, ServiceCategory>();
+    let hasUncategorized = false;
+
+    services.forEach((service) => {
+      if (selectedVehicle?.type && service.vehicleType && service.vehicleType !== selectedVehicle.type) {
+        return;
+      }
+
+      if (service.categoryId?._id) {
+        nextCategories.set(service.categoryId._id, service.categoryId);
+      } else {
+        hasUncategorized = true;
+      }
+    });
+
+    categories.forEach((category) => {
+      if (nextCategories.has(category._id)) {
+        nextCategories.set(category._id, category);
+      }
+    });
+
+    if (hasUncategorized) {
+      nextCategories.set('uncategorized', {
+        _id: 'uncategorized',
+        name: 'Chưa phân loại',
+        description: 'Dịch vụ chưa gắn danh mục.',
+        isActive: true,
+      });
+    }
+
+    return Array.from(nextCategories.values()).sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [categories, selectedVehicle, services]);
+
+  const selectedCategory = availableCategories.find((category) => category._id === categoryId) ?? null;
+  const visibleServices = useMemo(
+    () =>
+      services.filter((service) => {
+        if (selectedVehicle?.type && service.vehicleType && service.vehicleType !== selectedVehicle.type) {
+          return false;
+        }
+
+        if (!categoryId) return true;
+        return (service.categoryId?._id ?? 'uncategorized') === categoryId;
+      }),
+    [categoryId, selectedVehicle, services],
   );
 
+  const selectedServices = services.filter((service) => serviceIds.includes(service._id));
+  const totalPrice = selectedServices.reduce((total, service) => total + service.price, 0);
+  const totalDuration = selectedServices.reduce((total, service) => total + service.estimatedDuration, 0);
+  const eligiblePromotions = promotions.filter((promotion) => {
+    if (totalPrice < Number(promotion.minOrderAmount ?? 0)) return false;
+    if (promotion.type === 'free_service' && !getPromotionReferenceId(promotion.serviceId)) return false;
+    if (promotion.targetType !== 'service') return true;
+    return selectedServices.some((service) => service._id === getPromotionReferenceId(promotion.serviceId));
+  });
+  const selectedPromotion = eligiblePromotions.find((promotion) => promotion._id === promotionId) ?? null;
+  const promotionDiscount = selectedPromotion
+    ? calculatePromotionDiscount(selectedPromotion, totalPrice, selectedServices)
+    : 0;
+  const estimatedTotal = Math.max(0, totalPrice - promotionDiscount);
+
   const selectVehicle = (nextVehicleId: string) => {
-    const nextVehicle = vehicles.find((vehicle) => vehicle._id === nextVehicleId);
     setVehicleId(nextVehicleId);
-    setServiceIds((current) =>
-      current.filter((serviceId) => {
-        const service = services.find((item) => item._id === serviceId);
-        return service?.vehicleType === nextVehicle?.type;
-      }),
-    );
+    setCategoryId('');
+    setCategoryMenuOpen(false);
+    setServiceIds([]);
+    setPromotionId('');
+  };
+
+  const selectCategory = (nextCategoryId: string) => {
+    setCategoryId(nextCategoryId);
+    setCategoryMenuOpen(false);
+    setServiceIds([]);
+    setPromotionId('');
   };
 
   const toggleService = (serviceId: string) => {
@@ -457,15 +633,25 @@ function BookingModal({
         ? current.filter((item) => item !== serviceId)
         : [...current, serviceId],
     );
+    setPromotionId('');
   };
 
-  const submit = () => {
-    if (!vehicleId) {
-      Alert.alert('Chọn xe', 'Vui lòng chọn xe của bạn.');
+  const goNext = () => {
+    if (step === 0) {
+      if (!selectedVehicle) {
+        Alert.alert('Chọn xe', 'Vui lòng chọn xe của bạn.');
+        return;
+      }
+      setStep(1);
       return;
     }
-    if (!serviceIds.length) {
-      Alert.alert('Chọn dịch vụ', 'Vui lòng chọn ít nhất một dịch vụ.');
+
+    if (step === 1) {
+      if (!serviceIds.length) {
+        Alert.alert('Chọn dịch vụ', 'Vui lòng chọn ít nhất một dịch vụ.');
+        return;
+      }
+      setStep(2);
       return;
     }
 
@@ -480,25 +666,61 @@ function BookingModal({
       services: serviceIds.map((serviceId) => ({ serviceId })),
       scheduledAt: scheduledAt.toISOString(),
       note: note.trim() || undefined,
+      promotionId: promotionId || undefined,
     });
   };
 
+  const goBack = () => {
+    if (step === 0) {
+      onClose();
+      return;
+    }
+    setStep((current) => (current - 1) as 0 | 1 | 2);
+  };
+
+  const footerLabel = step === 0 ? 'Xác nhận xe' : step === 1 ? 'Tiếp tục chọn thời gian' : 'Xác nhận đặt lịch';
+  const footerDisabled =
+    saving ||
+    loading ||
+    !selectedVehicle ||
+    (step === 1 && !serviceIds.length) ||
+    (step === 2 && !selectedServices.length);
+
   return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
+    <Modal visible animationType="slide" onRequestClose={goBack}>
       <SafeAreaView style={styles.modalSafe}>
         <View style={styles.modalHeader}>
-          <View>
+          <View style={styles.modalHeaderCopy}>
             <Text style={styles.modalTitle}>Đặt lịch mới</Text>
-            <Text style={styles.modalSubtitle}>Chọn xe, dịch vụ và thời gian phù hợp.</Text>
+            <Text style={styles.modalSubtitle}>
+              {step === 0
+                ? 'Chọn xe của bạn rồi xác nhận để tiếp tục.'
+                : step === 1
+                  ? 'Chọn danh mục dịch vụ, rồi chọn các dịch vụ bên dưới.'
+                  : 'Chọn thời gian hẹn và kiểm tra lại tổng tiền.'}
+            </Text>
           </View>
-          <Pressable disabled={saving} onPress={onClose}>
-            <Text style={styles.closeText}>Đóng</Text>
+          <Pressable disabled={saving} onPress={goBack}>
+            <Text style={styles.closeText}>{step === 0 ? 'Đóng' : 'Quay lại'}</Text>
           </Pressable>
         </View>
 
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.modalContent}>
+        <View style={styles.stepper}>
+          {[
+            { label: 'Xe', active: step === 0 },
+            { label: 'Dịch vụ', active: step === 1 },
+            { label: 'Thời gian', active: step === 2 },
+          ].map((item, index) => (
+            <View key={item.label} style={styles.stepItem}>
+              <View style={[styles.stepDot, item.active && styles.stepDotActive]}>
+                <Text style={[styles.stepDotText, item.active && styles.stepDotTextActive]}>{index + 1}</Text>
+              </View>
+              <Text style={[styles.stepLabel, item.active && styles.stepLabelActive]}>{item.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalContent}>
           {loading ? (
             <ActivityIndicator color={colors.primary} size="large" style={styles.modalLoader} />
           ) : !vehicles.length || !services.length ? (
@@ -513,150 +735,233 @@ function BookingModal({
             </View>
           ) : (
             <>
-              <FormSection
-                title="1. Chọn xe"
-                caption="Dịch vụ sẽ được lọc theo loại xe bạn chọn.">
-                {vehicles.map((vehicle) => {
-                  const selected = vehicleId === vehicle._id;
-                  return (
-                    <Pressable
-                      key={vehicle._id}
-                      onPress={() => selectVehicle(vehicle._id)}
-                      style={[styles.selectCard, selected && styles.selectCardActive]}>
-                      <View style={styles.vehicleMark}>
-                        <Text style={styles.vehicleMarkText}>
-                          {vehicle.type === 'car' ? 'CAR' : vehicle.type === 'motorbike' ? 'BIKE' : 'OTHER'}
-                        </Text>
-                      </View>
-                      <View style={styles.selectCopy}>
-                        <Text style={styles.selectTitle}>
-                          {vehicle.brand} {vehicle.model}
-                        </Text>
-                        <Text style={styles.selectDescription}>
-                          {vehicle.year} · {vehicle.licensePlate}
-                        </Text>
-                      </View>
-                      <SelectionMark selected={selected} />
-                    </Pressable>
-                  );
-                })}
-              </FormSection>
-
-              <FormSection
-                title="2. Chọn dịch vụ"
-                caption="Bạn có thể chọn nhiều dịch vụ trong cùng một lịch hẹn.">
-                {!selectedVehicle ? (
-                  <Text style={styles.helperBox}>Hãy chọn xe trước để xem dịch vụ phù hợp.</Text>
-                ) : !filteredServices.length ? (
-                  <Text style={styles.helperBox}>Chưa có dịch vụ phù hợp với loại xe này.</Text>
-                ) : (
-                  filteredServices.map((service) => {
-                    const selected = serviceIds.includes(service._id);
+              {step === 0 ? (
+                <FormSection title="1. Chọn xe" caption="Chọn xe rồi xác nhận để sang bước tiếp theo.">
+                  {vehicles.map((vehicle) => {
+                    const selected = vehicleId === vehicle._id;
                     return (
                       <Pressable
-                        key={service._id}
-                        onPress={() => toggleService(service._id)}
-                        style={[styles.serviceCard, selected && styles.selectCardActive]}>
-                        <View style={styles.selectCopy}>
-                          <Text style={styles.selectTitle}>{service.name}</Text>
-                          <Text style={styles.selectDescription}>
-                            {service.description?.trim() || 'Dịch vụ chăm sóc xe tiêu chuẩn'}
-                          </Text>
-                          <Text style={styles.serviceMeta}>
-                            {formatDuration(service.estimatedDuration)} ·{' '}
-                            {formatCurrency(service.price)}
+                        key={vehicle._id}
+                        onPress={() => selectVehicle(vehicle._id)}
+                        style={[styles.selectCard, selected && styles.selectCardActive]}>
+                        <View style={styles.vehicleMark}>
+                          <Text style={styles.vehicleMarkText}>
+                            {vehicle.type === 'car' ? 'CAR' : vehicle.type === 'motorbike' ? 'BIKE' : 'OTHER'}
                           </Text>
                         </View>
-                        <SelectionMark selected={selected} multiple />
-                      </Pressable>
-                    );
-                  })
-                )}
-              </FormSection>
-
-              <FormSection title="3. Chọn thời gian" caption="Thời gian hẹn phải ở trong tương lai.">
-                <Text style={styles.fieldTitle}>Ngày hẹn</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dateRow}>
-                  {dates.map((date) => {
-                    const selected = scheduledDate === date.value;
-                    return (
-                      <Pressable
-                        key={date.value}
-                        onPress={() => setScheduledDate(date.value)}
-                        style={[styles.dateCard, selected && styles.dateCardActive]}>
-                        <Text style={[styles.dateWeekday, selected && styles.dateTextActive]}>
-                          {date.weekday}
-                        </Text>
-                        <Text style={[styles.dateDay, selected && styles.dateTextActive]}>
-                          {date.day}
-                        </Text>
-                        <Text style={[styles.dateMonth, selected && styles.dateTextActive]}>
-                          {date.month}
-                        </Text>
+                        <View style={styles.selectCopy}>
+                          <Text style={styles.selectTitle}>
+                            {vehicle.brand} {vehicle.model}
+                          </Text>
+                          <Text style={styles.selectDescription}>
+                            {vehicle.year} · {vehicle.licensePlate}
+                          </Text>
+                        </View>
+                        <SelectionMark selected={selected} />
                       </Pressable>
                     );
                   })}
-                </ScrollView>
+                </FormSection>
+              ) : null}
 
-                <Text style={styles.fieldTitle}>Giờ hẹn</Text>
-                <View style={styles.slotGrid}>
-                  {timeSlots.map((slot) => {
-                    const selected = scheduledTime === slot;
-                    return (
-                      <Pressable
-                        key={slot}
-                        onPress={() => setScheduledTime(slot)}
-                        style={[styles.slot, selected && styles.slotActive]}>
-                        <Text style={[styles.slotText, selected && styles.slotTextActive]}>
-                          {slot}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </FormSection>
+              {step === 1 ? (
+                <FormSection title="2. Chọn danh mục dịch vụ" caption="Chọn danh mục để lọc danh sách dịch vụ bên dưới.">
+                  {!selectedVehicle ? (
+                    <Text style={styles.helperBox}>Hãy chọn xe ở bước trước để xem danh mục phù hợp.</Text>
+                  ) : !availableCategories.length ? (
+                    <Text style={styles.helperBox}>Chưa có danh mục nào phù hợp với xe đã chọn.</Text>
+                  ) : (
+                    <>
+                      <View style={styles.dropdownBlock}>
+                        <Text style={styles.fieldTitle}>Danh mục dịch vụ</Text>
+                        <Pressable
+                          onPress={() => setCategoryMenuOpen((current) => !current)}
+                          style={[styles.dropdownButton, categoryMenuOpen && styles.dropdownButtonActive]}>
+                          <Text style={categoryId ? styles.dropdownValue : styles.dropdownPlaceholder}>
+                            {selectedCategory?.name || 'Tất cả danh mục'}
+                          </Text>
+                          <Text style={styles.dropdownChevron}>{categoryMenuOpen ? '⌃' : '⌄'}</Text>
+                        </Pressable>
 
-              <FormSection title="4. Ghi chú" caption="Thông tin này không bắt buộc.">
-                <TextInput
-                  value={note}
-                  onChangeText={setNote}
-                  placeholder="Ví dụ: cần kiểm tra thêm nội thất..."
-                  placeholderTextColor="#98a2b3"
-                  multiline
-                  maxLength={1000}
-                  style={styles.noteInput}
-                />
-              </FormSection>
+                        {categoryMenuOpen ? (
+                          <View style={styles.dropdownMenu}>
+                            <Pressable
+                              onPress={() => selectCategory('')}
+                              style={[styles.dropdownItem, !categoryId && styles.dropdownItemActive]}>
+                              <Text style={[styles.dropdownItemText, !categoryId && styles.dropdownItemTextActive]}>
+                                Tất cả danh mục
+                              </Text>
+                            </Pressable>
+                            {availableCategories.map((category) => {
+                              const selected = categoryId === category._id;
+                              return (
+                                <Pressable
+                                  key={category._id}
+                                  onPress={() => selectCategory(category._id)}
+                                  style={[styles.dropdownItem, selected && styles.dropdownItemActive]}>
+                                  <View style={styles.dropdownItemCopy}>
+                                    <Text style={[styles.dropdownItemText, selected && styles.dropdownItemTextActive]}>
+                                      {category.name}
+                                    </Text>
+                                    {category.description?.trim() ? (
+                                      <Text
+                                        style={[
+                                          styles.dropdownItemSubtext,
+                                          selected && styles.dropdownItemSubtextActive,
+                                        ]}>
+                                        {category.description}
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                  {selected ? <Text style={styles.dropdownCheck}>✓</Text> : null}
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                      </View>
 
-              {selectedServices.length ? (
-                <View style={styles.summaryCard}>
-                  <SummaryRow label="Xe" value={`${selectedVehicle?.brand} ${selectedVehicle?.model}`} />
-                  <SummaryRow label="Số dịch vụ" value={String(selectedServices.length)} />
-                  <SummaryRow label="Thời lượng" value={formatDuration(totalDuration)} />
-                  <View style={styles.summaryDivider} />
-                  <SummaryRow label="Tạm tính" value={formatCurrency(totalPrice)} strong />
-                </View>
+                      <View style={styles.serviceList}>
+                        <View style={styles.sectionHeaderRow}>
+                          <Text style={styles.fieldTitle}>Dịch vụ</Text>
+                          <Text style={styles.sectionHint}>{visibleServices.length} dịch vụ</Text>
+                        </View>
+
+                        {visibleServices.length ? (
+                          visibleServices.map((service) => {
+                            const selected = serviceIds.includes(service._id);
+                            return (
+                              <Pressable
+                                key={service._id}
+                                onPress={() => toggleService(service._id)}
+                                style={[styles.serviceCard, selected && styles.selectCardActive]}>
+                                <View style={styles.selectCopy}>
+                                  <Text style={styles.selectTitle}>{service.name}</Text>
+                                  <Text style={styles.selectDescription}>
+                                    {service.description?.trim() || 'Dịch vụ chăm sóc xe tiêu chuẩn'}
+                                  </Text>
+                                  <Text style={styles.serviceMeta}>
+                                    {formatDuration(service.estimatedDuration)} · {formatCurrency(service.price)}
+                                  </Text>
+                                </View>
+                                <SelectionMark selected={selected} multiple />
+                              </Pressable>
+                            );
+                          })
+                        ) : (
+                          <Text style={styles.helperBox}>Chưa có dịch vụ phù hợp với danh mục đã chọn.</Text>
+                        )}
+                      </View>
+                    </>
+                  )}
+                </FormSection>
+              ) : null}
+
+              {step === 2 ? (
+                <>
+                  <FormSection title="3. Chọn thời gian" caption="Thời gian hẹn phải ở trong tương lai.">
+                    <Text style={styles.fieldTitle}>Ngày hẹn</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateRow}>
+                      {dates.map((date) => {
+                        const selected = scheduledDate === date.value;
+                        return (
+                          <Pressable
+                            key={date.value}
+                            onPress={() => setScheduledDate(date.value)}
+                            style={[styles.dateCard, selected && styles.dateCardActive]}>
+                            <Text style={[styles.dateWeekday, selected && styles.dateTextActive]}>{date.weekday}</Text>
+                            <Text style={[styles.dateDay, selected && styles.dateTextActive]}>{date.day}</Text>
+                            <Text style={[styles.dateMonth, selected && styles.dateTextActive]}>{date.month}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+
+                    <Text style={styles.fieldTitle}>Giờ hẹn</Text>
+                    <View style={styles.slotGrid}>
+                      {timeSlots.map((slot) => {
+                        const selected = scheduledTime === slot;
+                        return (
+                          <Pressable
+                            key={slot}
+                            onPress={() => setScheduledTime(slot)}
+                            style={[styles.slot, selected && styles.slotActive]}>
+                            <Text style={[styles.slotText, selected && styles.slotTextActive]}>{slot}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </FormSection>
+
+                  <FormSection title="Ghi chú" caption="Thông tin này không bắt buộc.">
+                    <TextInput
+                      value={note}
+                      onChangeText={setNote}
+                      placeholder="Ví dụ: cần kiểm tra thêm nội thất..."
+                      placeholderTextColor="#98a2b3"
+                      multiline
+                      maxLength={1000}
+                      style={styles.noteInput}
+                    />
+                  </FormSection>
+
+                  <FormSection title="Khuyến mãi" caption="Mỗi lịch hẹn chỉ dùng một khuyến mãi phù hợp.">
+                    {eligiblePromotions.length ? (
+                      <>
+                        <Pressable
+                          onPress={() => setPromotionId('')}
+                          style={[styles.serviceCard, !promotionId && styles.selectCardActive]}>
+                          <View style={styles.selectCopy}>
+                            <Text style={styles.selectTitle}>Không sử dụng khuyến mãi</Text>
+                            <Text style={styles.selectDescription}>Giữ nguyên tạm tính cho lịch hẹn này.</Text>
+                          </View>
+                          <SelectionMark selected={!promotionId} />
+                        </Pressable>
+                        {eligiblePromotions.map((promotion) => {
+                          const selected = promotionId === promotion._id;
+                          return (
+                            <Pressable
+                              key={promotion._id}
+                              onPress={() => setPromotionId(promotion._id)}
+                              style={[styles.serviceCard, selected && styles.selectCardActive]}>
+                              <View style={styles.selectCopy}>
+                                <Text style={styles.selectTitle}>{promotion.title}</Text>
+                                <Text style={styles.selectDescription}>{getPromotionLabel(promotion)}</Text>
+                                {promotion.description?.trim() ? (
+                                  <Text style={styles.serviceMeta}>{promotion.description}</Text>
+                                ) : null}
+                              </View>
+                              <SelectionMark selected={selected} />
+                            </Pressable>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <Text style={styles.helperBox}>Chưa có khuyến mãi phù hợp với các dịch vụ đã chọn.</Text>
+                    )}
+                  </FormSection>
+
+                  <View style={styles.summaryCard}>
+                    <SummaryRow label="Xe" value={`${selectedVehicle?.brand} ${selectedVehicle?.model}`} />
+                    <SummaryRow label="Danh mục" value={selectedCategory?.name || 'Tất cả danh mục'} />
+                    <SummaryRow label="Dịch vụ" value={String(selectedServices.length)} />
+                    <SummaryRow label="Thời lượng" value={formatDuration(totalDuration)} />
+                    <View style={styles.summaryDivider} />
+                    <SummaryRow label="Tạm tính" value={formatCurrency(totalPrice)} strong />
+                    {promotionDiscount > 0 ? (
+                      <SummaryRow label="Khuyến mãi" value={`-${formatCurrency(promotionDiscount)}`} strong />
+                    ) : null}
+                    <SummaryRow label="Tổng dự kiến" value={formatCurrency(estimatedTotal)} strong />
+                  </View>
+                </>
               ) : null}
             </>
           )}
         </ScrollView>
 
         <View style={styles.footer}>
-          <Pressable
-            disabled={saving || loading || !vehicles.length || !services.length}
-            onPress={submit}
-            style={[
-              styles.continueButton,
-              (saving || loading || !vehicles.length || !services.length) && styles.buttonDisabled,
-            ]}>
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.continueText}>Xác nhận đặt lịch</Text>
-            )}
+          <Pressable disabled={footerDisabled} onPress={goNext} style={[styles.continueButton, footerDisabled && styles.buttonDisabled]}>
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.continueText}>{footerLabel}</Text>}
           </Pressable>
         </View>
       </SafeAreaView>
@@ -688,7 +993,7 @@ function CancelAppointmentModal({
           <Text style={styles.dialogTitle}>Hủy lịch hẹn</Text>
           <Text style={styles.dialogText}>
             Bạn có chắc muốn hủy lịch{' '}
-            {appointment.services.map((service) => service.nameSnapshot).join(', ')}?
+            {(appointment.services ?? []).map((service) => service.nameSnapshot).join(', ') || 'lịch này'}?
           </Text>
           <TextInput
             value={reason}
@@ -826,6 +1131,15 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.muted, textAlign: 'center', lineHeight: 20, marginTop: 6 },
   modalSafe: { flex: 1, backgroundColor: colors.background },
   modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: 20, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
+  modalHeaderCopy: { flex: 1 },
+  stepper: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingHorizontal: 20, paddingVertical: 14, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
+  stepItem: { flex: 1, alignItems: 'center', gap: 6 },
+  stepDot: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  stepDotActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  stepDotText: { color: colors.muted, fontSize: 12, fontWeight: '900' },
+  stepDotTextActive: { color: '#fff' },
+  stepLabel: { color: colors.muted, fontSize: 11, fontWeight: '800' },
+  stepLabelActive: { color: colors.ink },
   modalTitle: { color: colors.ink, fontSize: 25, fontWeight: '900' },
   modalSubtitle: { color: colors.muted, marginTop: 4 },
   closeText: { color: colors.primary, fontWeight: '800', paddingTop: 5 },
@@ -843,6 +1157,24 @@ const styles = StyleSheet.create({
   selectCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 12 },
   serviceCard: { flexDirection: 'row', alignItems: 'flex-start', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 12 },
   selectCardActive: { borderColor: colors.primary, backgroundColor: '#f5f9ff' },
+  dropdownBlock: { gap: 10 },
+  dropdownButton: { minHeight: 48, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  dropdownButtonActive: { borderColor: colors.primary, backgroundColor: '#f5f9ff' },
+  dropdownValue: { color: colors.ink, fontSize: 15, fontWeight: '800', flex: 1 },
+  dropdownPlaceholder: { color: colors.muted, fontSize: 15, fontWeight: '700', flex: 1 },
+  dropdownChevron: { color: colors.muted, fontSize: 16, fontWeight: '900' },
+  dropdownMenu: { borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden' },
+  dropdownItem: { paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  dropdownItemActive: { backgroundColor: '#f5f9ff' },
+  dropdownItemCopy: { flex: 1, gap: 3 },
+  dropdownItemText: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  dropdownItemTextActive: { color: colors.primary },
+  dropdownItemSubtext: { color: colors.muted, fontSize: 12, lineHeight: 16 },
+  dropdownItemSubtextActive: { color: '#2959c6' },
+  dropdownCheck: { color: colors.primary, fontSize: 16, fontWeight: '900' },
+  serviceList: { gap: 10 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  sectionHint: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   vehicleMark: { width: 52, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.tint },
   vehicleMarkText: { color: colors.primary, fontSize: 9, fontWeight: '900' },
   selectCopy: { flex: 1 },

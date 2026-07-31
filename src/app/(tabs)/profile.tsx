@@ -9,6 +9,7 @@ import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
 import { usersApi } from '@/lib/api';
 
 const appointmentsPath = '/appointments' as Href;
+const servicesPath = '/services' as Href;
 const serviceHistoriesPath = '/service-histories' as Href;
 const notificationsPath = '/notifications' as Href;
 const promotionsPath = '/promotions' as Href;
@@ -19,24 +20,24 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
 
   const subtitle = useMemo(() => {
-    if (user?.role === 'admin') return 'Quan ly tai khoan va truy cap nhanh toi khu vuc dieu hanh.';
-    if (user?.role === 'staff') return 'Theo doi ho so va quay lai cac cong viec dang duoc giao.';
-    return 'Quan ly ho so, thong bao va quyen loi thanh vien cua ban.';
+    if (user?.role === 'admin') return 'Quản lý tài khoản và truy cập nhanh tới khu vực điều hành.';
+    if (user?.role === 'staff') return 'Theo dõi hồ sơ và quay lại các công việc đang được giao.';
+    return 'Quản lý hồ sơ, thông báo và quyền lợi thành viên của bạn.';
   }, [user?.role]);
 
   const save = async () => {
     if (!displayName.trim()) {
-      Alert.alert('Ten hien thi khong duoc de trong');
+      Alert.alert('Tên hiển thị không được để trống');
       return;
     }
 
     setSaving(true);
     try {
       updateUser(await usersApi.updateMe(displayName));
-      Alert.alert('Thanh cong', 'Thong tin tai khoan da duoc cap nhat.');
+      Alert.alert('Thành công', 'Thông tin tài khoản đã được cập nhật.');
     } catch (error) {
       await validateSession();
-      Alert.alert('Khong the cap nhat', getApiErrorMessage(error));
+      Alert.alert('Không thể cập nhật', getApiErrorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -45,7 +46,7 @@ export default function ProfileScreen() {
   return (
     <Screen>
       <View>
-        <Text style={styles.title}>Tai khoan</Text>
+        <Text style={styles.title}>Tài khoản</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
 
@@ -61,45 +62,45 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.quickGrid}>
-        <QuickAction title="Lich hen" onPress={() => router.push(appointmentsPath)} />
+        <QuickAction title="Lịch hẹn" onPress={() => router.push(appointmentsPath)} />
+        <QuickAction title="Dịch vụ" onPress={() => router.push(servicesPath)} />
         {user?.role === 'customer' ? (
           <>
-            <QuickAction title="Thong bao" onPress={() => router.push(notificationsPath)} />
-            <QuickAction title="Khuyen mai" onPress={() => router.push(promotionsPath)} />
-            <QuickAction title="Lich su dich vu" onPress={() => router.push(serviceHistoriesPath)} />
+            <QuickAction title="Thông báo" onPress={() => router.push(notificationsPath)} />
+            <QuickAction title="Khuyến mãi" onPress={() => router.push(promotionsPath)} />
+            <QuickAction title="Lịch sử dịch vụ" onPress={() => router.push(serviceHistoriesPath)} />
           </>
         ) : null}
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Thong tin ca nhan</Text>
-        <FormField label="Ten hien thi" value={displayName} onChangeText={setDisplayName} />
-        <FormField label="So dien thoai" value={user?.phone ?? ''} editable={false} />
+        <Text style={styles.cardTitle}>Thông tin cá nhân</Text>
+        <FormField label="Tên hiển thị" value={displayName} onChangeText={setDisplayName} />
+        <FormField label="Số điện thoại" value={user?.phone ?? ''} editable={false} />
         <Pressable disabled={saving} onPress={save} style={styles.saveButton}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Luu thay doi</Text>}
+          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Lưu thay đổi</Text>}
         </Pressable>
       </View>
 
       <View style={styles.card}>
         {user?.role === 'customer' ? (
           <>
-            <InfoRow label="Diem thanh vien" value={`${user?.loyaltyPoints ?? 0} diem`} />
+            <InfoRow label="Điểm thành viên" value={`${user?.loyaltyPoints ?? 0} điểm`} />
             <View style={styles.divider} />
           </>
         ) : null}
-        <InfoRow label="Trang thai" value="Dang hoat dong" accent={colors.success} />
+        <InfoRow label="Trạng thái" value="Đang hoạt động" accent={colors.success} />
       </View>
 
       <Pressable
         onPress={() =>
-          Alert.alert('Dang xuat', 'Ban co chac chan muon ket thuc phien?', [
-            { text: 'Huy', style: 'cancel' },
-            { text: 'Dang xuat', style: 'destructive', onPress: signOut },
+          Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn kết thúc phiên?', [
+            { text: 'Hủy', style: 'cancel' },
+            { text: 'Đăng xuất', style: 'destructive', onPress: signOut },
           ])
         }
-        style={styles.logout}
-      >
-        <Text style={styles.logoutText}>Dang xuat</Text>
+        style={styles.logout}>
+        <Text style={styles.logoutText}>Đăng xuất</Text>
       </Pressable>
     </Screen>
   );
@@ -109,7 +110,7 @@ function QuickAction({ title, onPress }: { title: string; onPress: () => void })
   return (
     <Pressable onPress={onPress} style={styles.quickCard}>
       <Text style={styles.quickTitle}>{title}</Text>
-      <Text style={styles.quickText}>Mo nhanh</Text>
+      <Text style={styles.quickText}>Mở nhanh</Text>
     </Pressable>
   );
 }
@@ -127,24 +128,66 @@ const styles = StyleSheet.create({
   title: { color: colors.ink, fontSize: 30, fontWeight: '900' },
   subtitle: { color: colors.muted, marginTop: 5, lineHeight: 20 },
   identity: { alignItems: 'center', padding: 23, borderRadius: 22, backgroundColor: colors.ink },
-  avatar: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  avatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+  },
   avatarText: { color: '#fff', fontSize: 27, fontWeight: '900' },
   name: { color: '#fff', fontSize: 21, fontWeight: '900', marginTop: 13 },
   phone: { color: '#d0d5dd', marginTop: 4 },
-  roleBadge: { backgroundColor: '#344054', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, marginTop: 10 },
+  roleBadge: {
+    backgroundColor: '#344054',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 999,
+    marginTop: 10,
+  },
   roleText: { color: '#d0d5dd', fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickCard: { minWidth: '47%', flexGrow: 1, padding: 15, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  quickCard: {
+    minWidth: '47%',
+    flexGrow: 1,
+    padding: 15,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   quickTitle: { color: colors.ink, fontWeight: '800' },
   quickText: { color: colors.muted, marginTop: 5 },
-  card: { padding: 19, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 16 },
+  card: {
+    padding: 19,
+    borderRadius: 19,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 16,
+  },
   cardTitle: { color: colors.ink, fontSize: 18, fontWeight: '900' },
-  saveButton: { minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.primary },
+  saveButton: {
+    minHeight: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+  },
   saveText: { color: '#fff', fontWeight: '800' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   infoLabel: { color: colors.muted },
   infoValue: { color: colors.ink, fontWeight: '800' },
   divider: { height: 1, backgroundColor: colors.border },
-  logout: { minHeight: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef3f2', borderWidth: 1, borderColor: '#fecdca' },
+  logout: {
+    minHeight: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fef3f2',
+    borderWidth: 1,
+    borderColor: '#fecdca',
+  },
   logoutText: { color: colors.danger, fontSize: 16, fontWeight: '800' },
 });

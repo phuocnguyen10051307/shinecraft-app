@@ -17,33 +17,84 @@ export type VehicleType = 'car' | 'motorbike' | 'other';
 export interface Vehicle {
   _id: string;
   customerId?: string | Pick<User, '_id' | 'displayName' | 'phone' | 'avatarUrl'>;
-  type: VehicleType;
   brand: string;
   model: string;
+  type?: VehicleType;
   licensePlate: string;
   year: number;
-  note?: string;
   images?: { url: string; id: string }[];
+  deletedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
 export interface VehicleInput {
-  type: VehicleType;
   brand: string;
   model: string;
+  type?: VehicleType;
   licensePlate: string;
   year: number;
+  images?: {
+    uri: string;
+    name: string;
+    type: string;
+  }[];
+}
+
+export type VehicleAccessRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface VehicleAccessRequestDocument {
+  url: string;
+  id: string;
+  mimeType: string;
+  name?: string;
+}
+
+export interface VehicleAccessRequest {
+  _id: string;
+  licensePlate: string;
+  relationship: string;
   note?: string;
+  status: VehicleAccessRequestStatus;
+  reviewNote?: string;
+  createdAt: string;
+  reviewedAt?: string;
+  requesterId?: string | Pick<User, '_id' | 'displayName' | 'phone'>;
+  vehicleId?: Vehicle;
+  documents?: VehicleAccessRequestDocument[];
+}
+
+export interface VehicleAccessRequestInput {
+  licensePlate: string;
+  relationship: string;
+  note?: string;
+  documents?: {
+    uri: string;
+    name: string;
+    type: string;
+  }[];
 }
 
 export interface Service {
   _id: string;
   name: string;
   description?: string;
-  vehicleType: VehicleType;
+  vehicleType?: VehicleType;
+  categoryId?: {
+    _id: string;
+    name: string;
+    description?: string;
+    isActive?: boolean;
+  } | null;
   estimatedDuration: number;
   price: number;
+  isActive?: boolean;
+}
+
+export interface ServiceCategory {
+  _id: string;
+  name: string;
+  description?: string;
   isActive?: boolean;
 }
 
@@ -53,6 +104,9 @@ export type AppointmentStatus =
   | 'in_progress'
   | 'completed'
   | 'cancelled';
+
+export type AppointmentPaymentMethod = 'cash' | 'payos';
+export type AppointmentPaymentStatus = 'unpaid' | 'pending' | 'paid' | 'failed' | 'cancelled';
 
 export interface AppointmentServiceSnapshot {
   serviceId: string;
@@ -71,8 +125,59 @@ export interface Appointment {
   status: AppointmentStatus;
   note?: string;
   totalEstimatedDuration: number;
+  subtotalPrice?: number;
+  discountAmount?: number;
   totalPrice: number;
-  paymentStatus: 'unpaid' | 'paid' | 'refunded';
+  finalAmount?: number;
+  paymentMethod?: AppointmentPaymentMethod | null;
+  paymentStatus: AppointmentPaymentStatus;
+  paidAt?: string | null;
+  membershipTierDiscountSnapshot?: {
+    name?: string;
+    discountPercent?: number;
+    discountAmount?: number;
+  } | null;
+  promotionId?:
+    | string
+    | {
+        _id: string;
+        title: string;
+        code: string;
+        type: 'percentage' | 'fixed_amount' | 'bonus_points' | 'free_service';
+        discountValue?: number | null;
+        bonusPoints?: number | null;
+      }
+    | null;
+  promotionDiscountSnapshot?: {
+    title?: string;
+    code?: string;
+    type?: 'percentage' | 'fixed_amount' | 'bonus_points' | 'free_service';
+    discountValue?: number | null;
+    bonusPoints?: number | null;
+    discountAmount?: number;
+  } | null;
+  rewardRedemptionId?:
+    | string
+    | {
+        _id: string;
+        rewardId?:
+          | string
+          | {
+              _id: string;
+              name: string;
+              discountType: 'percentage' | 'fixed_amount';
+              discountValue: number;
+            };
+        status: 'available' | 'used' | 'expired' | 'cancelled';
+      }
+    | null;
+  rewardDiscountSnapshot?: {
+    name?: string;
+    discountType?: 'percentage' | 'fixed_amount';
+    discountValue?: number | null;
+    pointsUsed?: number | null;
+    discountAmount?: number;
+  } | null;
   cancelReason?: string | null;
   cancelledAt?: string | null;
   completedAt?: string | null;
@@ -92,7 +197,7 @@ export interface ServiceHistoryAppointmentSummary {
   status: AppointmentStatus;
   scheduledAt?: string | null;
   completedAt?: string | null;
-  paymentStatus?: 'unpaid' | 'paid' | 'refunded';
+  paymentStatus?: AppointmentPaymentStatus;
 }
 
 export interface ServiceHistory {
@@ -117,6 +222,8 @@ export interface CreateAppointmentInput {
   services: { serviceId: string }[];
   scheduledAt: string;
   note?: string;
+  promotionId?: string;
+  rewardRedemptionId?: string;
 }
 
 export interface MembershipTier {
@@ -194,9 +301,10 @@ export interface Promotion {
   serviceId?: Service | string | null;
   startDate: string;
   endDate: string;
+  minOrderAmount?: number | null;
+  maxDiscountAmount?: number | null;
   usageLimit?: number | null;
   usedCount?: number;
-  minSpend?: number;
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -217,3 +325,5 @@ export interface DashboardOverview {
     source: string;
   };
 }
+
+

@@ -1,8 +1,8 @@
 import { Redirect } from 'expo-router';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { useAuth } from '@/contexts/auth-context';
 import { colors } from '@/constants/shinecraft-theme';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function IndexScreen() {
   const { user, isBootstrapping } = useAuth();

@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { tokenStorage } from '@/lib/storage';
 import type {
   Appointment,
+  AppointmentPaymentStatus,
   AppointmentStatus,
   CreateAppointmentInput,
   DashboardOverview,
@@ -14,9 +15,12 @@ import type {
   Reward,
   RewardRedemption,
   Service,
+  ServiceCategory,
   ServiceHistory,
   User,
   Vehicle,
+  VehicleAccessRequest,
+  VehicleAccessRequestInput,
   VehicleInput,
 } from '@/types';
 
@@ -28,6 +32,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 interface ApiEnvelope<T> {
   data: T;
   message?: string;
+  code?: string;
   pagination?: { page?: number; limit?: number; total?: number; totalPages?: number };
 }
 
@@ -35,6 +40,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public code?: string,
   ) {
     super(message);
   }
@@ -62,15 +68,19 @@ async function request<T>(path: string, options: RequestOptions = {}) {
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) await tokenStorage.remove();
-      throw new ApiError(payload.message || 'Không thể kết nối đến máy chủ.', response.status);
+      throw new ApiError(
+        payload.message || 'Khong the ket noi den may chu.',
+        response.status,
+        payload.code,
+      );
     }
     return payload as ApiEnvelope<T>;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     const message =
       error instanceof Error && error.name === 'AbortError'
-        ? 'Máy chủ phản hồi quá lâu. Vui lòng thử lại.'
-        : `Không thể kết nối đến API tại ${API_URL}.`;
+        ? 'May chu phan hoi qua lau. Vui long thu lai.'
+        : `Khong the ket noi den API tai ${API_URL}.`;
     throw new ApiError(message, 0);
   } finally {
     clearTimeout(timeout);
@@ -79,12 +89,34 @@ async function request<T>(path: string, options: RequestOptions = {}) {
 
 const toVehicleFormData = (input: Partial<VehicleInput>) => {
   const data = new FormData();
-  if (input.type !== undefined) data.append('type', input.type);
   if (input.brand !== undefined) data.append('brand', input.brand.trim());
   if (input.model !== undefined) data.append('model', input.model.trim());
-  if (input.licensePlate !== undefined) data.append('licensePlate', input.licensePlate.trim());
+  if (input.licensePlate !== undefined) {
+    data.append('licensePlate', input.licensePlate.replace(/\s+/g, '').toUpperCase());
+  }
   if (input.year !== undefined) data.append('year', String(input.year));
-  if (input.note !== undefined) data.append('note', input.note.trim());
+  input.images?.forEach((image, index) => {
+    data.append('files', {
+      uri: image.uri,
+      name: image.name || `vehicle-${index + 1}.jpg`,
+      type: image.type || 'image/jpeg',
+    } as never);
+  });
+  return data;
+};
+
+const toVehicleAccessRequestFormData = (input: VehicleAccessRequestInput) => {
+  const data = new FormData();
+  data.append('licensePlate', input.licensePlate.replace(/\s+/g, '').toUpperCase());
+  data.append('relationship', input.relationship.trim());
+  if (input.note?.trim()) data.append('note', input.note.trim());
+  input.documents?.forEach((document, index) => {
+    data.append('documents', {
+      uri: document.uri,
+      name: document.name || `document-${index + 1}`,
+      type: document.type || 'application/octet-stream',
+    } as never);
+  });
   return data;
 };
 
@@ -117,7 +149,7 @@ export const authApi = {
     try {
       await request('/auth/signout', { method: 'POST' });
     } catch {
-      // Đăng xuất cục bộ vẫn phải hoàn tất nếu máy chủ không khả dụng.
+      // Dang xuat cuc bo van phai hoan tat neu may chu khong kha dung.
     }
   },
 };
@@ -139,6 +171,17 @@ export const vehiclesApi = {
   remove: async (id: string) => request(`/vehicles/${id}`, { method: 'DELETE' }),
 };
 
+export const vehicleAccessRequestsApi = {
+  create: async (input: VehicleAccessRequestInput) =>
+    (
+      await request<VehicleAccessRequest>('/vehicle-access-requests', {
+        method: 'POST',
+        body: toVehicleAccessRequestFormData(input),
+      })
+    ).data,
+  listMine: async () => (await request<VehicleAccessRequest[]>('/vehicle-access-requests/me')).data,
+};
+
 export const usersApi = {
   updateMe: async (displayName: string) =>
     (
@@ -156,6 +199,10 @@ export const usersApi = {
         body: JSON.stringify(input),
       })
     ).data,
+};
+
+export const serviceCategoriesApi = {
+  listActive: async () => unwrapList<ServiceCategory>('/service-categories/active?limit=100'),
 };
 
 export const servicesApi = {
@@ -178,7 +225,12 @@ export const appointmentsApi = {
     (
       await request<Appointment>('/appointments', {
         method: 'POST',
-        body: JSON.stringify({ ...input, note: input.note?.trim() || undefined }),
+        body: JSON.stringify({
+          ...input,
+          note: input.note?.trim() || undefined,
+          promotionId: input.promotionId || undefined,
+          rewardRedemptionId: input.rewardRedemptionId || undefined,
+        }),
       })
     ).data,
   cancelMine: async (appointmentId: string, cancelReason?: string) =>
@@ -195,11 +247,11 @@ export const appointmentsApi = {
         body: JSON.stringify({ status }),
       })
     ).data,
-  updatePaymentStatus: async (appointmentId: string, paymentStatus: Appointment['paymentStatus']) =>
+  updatePaymentStatus: async (appointmentId: string, paymentStatus: AppointmentPaymentStatus) =>
     (
       await request<Appointment>(`/appointments/${appointmentId}/payment-status`, {
         method: 'PATCH',
-        body: JSON.stringify({ paymentStatus }),
+        body: JSON.stringify({ paymentStatus, paymentMethod: 'cash' }),
       })
     ).data,
   assignStaff: async (appointmentId: string, staffId: string) =>
@@ -277,6 +329,3 @@ export const notificationsApi = {
 export const dashboardApi = {
   getOverview: async () => (await request<DashboardOverview>('/dashboard/overview')).data,
 };
-
-
-
