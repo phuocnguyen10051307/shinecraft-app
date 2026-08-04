@@ -48,8 +48,9 @@ export function LoginScreen() {
           <View style={styles.logo}>
             <Text style={styles.logoText}>SC</Text>
           </View>
+          <Text style={styles.eyebrow}>CHĂM SÓC XE CÙNG SHINECRAFT</Text>
           <Text style={styles.title}>Chào mừng trở lại</Text>
-          <Text style={styles.subtitle}>Đăng nhập để quản lý xe và lịch chăm sóc của bạn.</Text>
+          <Text style={styles.subtitle}>Đăng nhập để đặt lịch, quản lý xe và theo dõi quyền lợi thành viên.</Text>
         </View>
 
         <View style={styles.card}>
@@ -72,7 +73,7 @@ export function LoginScreen() {
           <Pressable
             disabled={loading}
             onPress={submit}
-            style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.button, loading && styles.disabled, pressed && styles.pressed]}>
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
@@ -104,6 +105,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   logoText: { color: '#fff', fontWeight: '900', fontSize: 27 },
+  eyebrow: { color: colors.primary, fontSize: 11, fontWeight: '900', letterSpacing: 1.3 },
   title: { color: colors.ink, fontSize: 29, fontWeight: '900' },
   subtitle: { color: colors.muted, textAlign: 'center', lineHeight: 21, maxWidth: 330 },
   card: {
@@ -124,6 +126,7 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '800' },
   pressed: { opacity: 0.8 },
+  disabled: { opacity: 0.55 },
   register: { textAlign: 'center', color: colors.muted, paddingTop: 4 },
   registerStrong: { color: colors.primary, fontWeight: '800' },
 });

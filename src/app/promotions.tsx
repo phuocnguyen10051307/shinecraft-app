@@ -52,7 +52,7 @@ export default function PromotionsScreen() {
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>Màn này dành cho khách hàng</Text>
           <Text style={styles.emptyText}>
-            Hiện tại app mobile chỉ hiển thị khuyến mãi đang áp dụng cho tài khoản khách hàng.
+            Các chương trình ưu đãi tại đây chỉ dành cho tài khoản khách hàng.
           </Text>
         </View>
       </Screen>
@@ -124,6 +124,9 @@ export default function PromotionsScreen() {
               <Text style={styles.metaText}>Đã dùng {item.usedCount ?? 0}/{item.usageLimit}</Text>
             ) : null}
           </View>
+          <Pressable onPress={() => router.push('/appointments')} style={styles.bookButton}>
+            <Text style={styles.bookButtonText}>Đặt lịch với ưu đãi này</Text>
+          </Pressable>
         </View>
       ))}
     </Screen>
@@ -176,4 +179,6 @@ const styles = StyleSheet.create({
   cardText: { color: colors.muted, lineHeight: 20 },
   metaBlock: { gap: 5, marginTop: 2 },
   metaText: { color: colors.muted, fontSize: 12 },
+  bookButton: { minHeight: 46, marginTop: 4, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  bookButtonText: { color: '#fff', fontWeight: '800' },
 });

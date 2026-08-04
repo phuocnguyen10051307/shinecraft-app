@@ -11,7 +11,6 @@ import type {
   LoyaltyAccount,
   LoyaltyTransaction,
   MembershipTier,
-  NotificationItem,
   Promotion,
   Reward,
   RewardRedemption,
@@ -97,7 +96,7 @@ async function request<T>(path: string, options: RequestOptions = {}) {
     const message =
       error instanceof Error && error.name === 'AbortError'
         ? 'May chu phan hoi qua lau. Vui long thu lai.'
-        : `Khong the ket noi den API tai ${API_URL}.`;
+        : 'Không thể kết nối đến hệ thống. Vui lòng kiểm tra mạng và thử lại.';
     throw new ApiError(message, 0);
   } finally {
     clearTimeout(timeout);
@@ -318,29 +317,6 @@ export const serviceHistoriesApi = {
   },
   getMineById: async (serviceHistoryId: string) =>
     (await request<ServiceHistory>(`/service-histories/my/${serviceHistoryId}`)).data,
-};
-
-export const notificationsApi = {
-  listMy: async () => {
-    try {
-      return await unwrapList<NotificationItem>('/notifications/me?limit=100');
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) return [];
-      throw error;
-    }
-  },
-  getUnreadCount: async () => {
-    try {
-      return (await request<{ unreadCount: number }>('/notifications/me/unread-count')).data.unreadCount;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) return 0;
-      throw error;
-    }
-  },
-  markRead: async (notificationId: string) =>
-    (await request<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'PATCH' })).data,
-  markAllRead: async () =>
-    (await request<{ modifiedCount: number }>('/notifications/me/read-all', { method: 'PATCH' })).data,
 };
 
 export const dashboardApi = {

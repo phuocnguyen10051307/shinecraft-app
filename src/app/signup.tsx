@@ -54,8 +54,9 @@ export default function SignupScreen() {
         <Text style={styles.back}>Quay lại đăng nhập</Text>
       </Pressable>
       <View>
+        <Text style={styles.eyebrow}>BẮT ĐẦU CÙNG SHINECRAFT</Text>
         <Text style={styles.title}>Tạo tài khoản</Text>
-        <Text style={styles.subtitle}>Bắt đầu quản lý hành trình chăm sóc xe cùng ShineCraft.</Text>
+        <Text style={styles.subtitle}>Tạo hồ sơ để đặt lịch, quản lý xe và nhận quyền lợi thành viên.</Text>
       </View>
       <View style={styles.card}>
         <View style={styles.row}>
@@ -84,7 +85,7 @@ export default function SignupScreen() {
           onChangeText={update('confirmPassword')}
           secureTextEntry
         />
-        <Pressable onPress={submit} disabled={loading} style={styles.button}>
+        <Pressable onPress={submit} disabled={loading} style={[styles.button, loading && styles.disabled]}>
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
@@ -98,6 +99,7 @@ export default function SignupScreen() {
 
 const styles = StyleSheet.create({
   back: { color: colors.primary, fontWeight: '700', paddingVertical: 6 },
+  eyebrow: { color: colors.primary, fontSize: 11, fontWeight: '900', letterSpacing: 1.3 },
   title: { color: colors.ink, fontSize: 30, fontWeight: '900' },
   subtitle: { color: colors.muted, lineHeight: 21, marginTop: 7 },
   card: {
@@ -119,4 +121,5 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  disabled: { opacity: 0.55 },
 });

@@ -68,11 +68,7 @@ export default function ProtectedTabsLayout() {
       <Tabs.Screen
         name={'service-histories'}
         options={{
-          href: user?.role === 'customer' ? undefined : null,
-          title: 'Lịch sử',
-          tabBarIcon: ({ color }) => (
-            <TabIcon color={color} name="clock.arrow.circlepath" fallback="↻" />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen
