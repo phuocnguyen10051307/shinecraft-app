@@ -6,7 +6,6 @@ export interface User {
   displayName: string;
   role: UserRole;
   avatarUrl?: string;
-  loyaltyPoints?: number;
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -240,6 +239,10 @@ export interface LoyaltyAccount {
   totalEarnedPoints: number;
   totalRedeemedPoints: number;
   totalExpiredPoints: number;
+  currentQuarterEarnedPoints: number;
+  loyaltyPeriodKey?: string | null;
+  nextQuarterResetAt?: string | null;
+  lastPointEarnedAt?: string | null;
   membershipTierId?: MembershipTier | string | null;
 }
 
@@ -260,6 +263,8 @@ export interface Reward {
   requiredPoints: number;
   discountType: 'percentage' | 'fixed_amount';
   discountValue: number;
+  minOrderAmount?: number | null;
+  maxDiscountAmount?: number | null;
   quantity?: number | null;
   redeemedCount?: number;
   isActive?: boolean;
@@ -273,19 +278,6 @@ export interface RewardRedemption {
   status: 'available' | 'used' | 'expired' | 'cancelled';
   redeemedAt?: string;
   usedAt?: string | null;
-}
-
-export interface NotificationItem {
-  _id: string;
-  title: string;
-  message: string;
-  type: 'appointment' | 'booking' | 'promotion' | 'maintenance' | 'loyalty' | 'system';
-  relatedModel?: string | null;
-  relatedId?: string | null;
-  isRead: boolean;
-  readAt?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 export interface Promotion {
