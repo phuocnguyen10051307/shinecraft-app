@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FormField } from '@/components/form-field';
 import type { Vehicle, VehicleInput } from '@/types';
@@ -53,12 +53,21 @@ export function VehicleModal({
   onClose: () => void;
   onSave: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [brandPickerVisible, setBrandPickerVisible] = useState(false);
   const [modelPickerVisible, setModelPickerVisible] = useState(false);
   const [yearPickerVisible, setYearPickerVisible] = useState(false);
 
   const modelOptions = useMemo(() => (form.brand ? (carModelsByBrand[form.brand] ?? []) : []), [form.brand]);
   const selectedImages = form.images ?? [];
+  const selectionOpen = brandPickerVisible || modelPickerVisible || yearPickerVisible;
+
+  const closeModal = () => {
+    setBrandPickerVisible(false);
+    setModelPickerVisible(false);
+    setYearPickerVisible(false);
+    onClose();
+  };
 
   useEffect(() => {
     if (!form.brand) return;
@@ -167,16 +176,20 @@ export function VehicleModal({
   );
 
   return (
-    <>
-      <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-        <SafeAreaView style={vehicleStyles.modalSafe}>
+      <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={closeModal}>
+        <View
+          style={[
+            vehicleStyles.modalSafe,
+            { paddingTop: Math.max(insets.top, 12), paddingBottom: Math.max(insets.bottom, 12) },
+          ]}>
           <ScrollView
             contentContainerStyle={vehicleStyles.modalContent}
             keyboardShouldPersistTaps="handled"
+            scrollEnabled={!selectionOpen}
           >
             <View style={vehicleStyles.modalHeader}>
               <Text style={vehicleStyles.modalTitle}>{editing ? 'Chỉnh sửa xe' : 'Thêm xe mới'}</Text>
-              <Pressable onPress={onClose}>
+              <Pressable hitSlop={10} onPress={closeModal} style={vehicleStyles.modalCloseButton}>
                 <Text style={vehicleStyles.close}>Đóng</Text>
               </Pressable>
             </View>
@@ -184,7 +197,7 @@ export function VehicleModal({
             <View style={vehicleStyles.formPanel}>
               <Text style={vehicleStyles.panelTitle}>1. Hãng xe và dòng xe</Text>
               <Text style={vehicleStyles.panelCaption}>
-                Chọn từ danh sách giống web, sau đó app sẽ lọc đúng các dòng xe theo hãng đã chọn.
+                Chọn hãng xe trước để xem các dòng xe phù hợp.
               </Text>
 
               <SelectionField
@@ -206,7 +219,7 @@ export function VehicleModal({
             <View style={vehicleStyles.formPanel}>
               <Text style={vehicleStyles.panelTitle}>2. Năm sản xuất</Text>
               <Text style={vehicleStyles.panelCaption}>
-                Chọn năm từ danh sách để khớp với luồng web và tránh nhập sai dữ liệu.
+                Chọn đúng năm sản xuất được ghi trên giấy tờ xe.
               </Text>
 
               <SelectionField
@@ -220,7 +233,7 @@ export function VehicleModal({
             <View style={vehicleStyles.formPanel}>
               <Text style={vehicleStyles.panelTitle}>3. Biển số</Text>
               <Text style={vehicleStyles.panelCaption}>
-                Biển số vẫn được nhập tay và app sẽ chuẩn hóa trước khi gửi lên backend.
+                Nhập đầy đủ biển số xe, ví dụ 30A-123.45.
               </Text>
               <FormField
                 label="Biển số"
@@ -271,7 +284,7 @@ export function VehicleModal({
             </View>
 
             <Text style={vehicleStyles.helperText}>
-              Form mobile này đã đổi sang kiểu chọn như web để dễ dùng hơn trên app khách hàng.
+              Kiểm tra lại thông tin trước khi lưu để việc đặt lịch diễn ra thuận tiện hơn.
             </Text>
 
             <Pressable disabled={saving} onPress={onSave} style={vehicleStyles.saveButton}>
@@ -282,37 +295,36 @@ export function VehicleModal({
               )}
             </Pressable>
           </ScrollView>
-        </SafeAreaView>
+
+          <SelectionSheet
+            visible={brandPickerVisible}
+            title="Chọn hãng xe"
+            sections={brandSections}
+            selectedValue={form.brand}
+            onClose={() => setBrandPickerVisible(false)}
+            onSelect={selectBrand}
+          />
+
+          <SelectionSheet
+            visible={modelPickerVisible}
+            title={form.brand ? 'Chọn dòng xe - ' + form.brand : 'Chọn dòng xe'}
+            sections={modelSections}
+            selectedValue={form.model}
+            emptyMessage="Chưa có dòng xe phù hợp với hãng đã chọn."
+            onClose={() => setModelPickerVisible(false)}
+            onSelect={selectModel}
+          />
+
+          <SelectionSheet
+            visible={yearPickerVisible}
+            title="Chọn năm sản xuất"
+            sections={yearSections}
+            selectedValue={form.year ? String(form.year) : ''}
+            onClose={() => setYearPickerVisible(false)}
+            onSelect={(value) => selectYear(Number(value))}
+          />
+        </View>
       </Modal>
-
-      <SelectionSheet
-        visible={brandPickerVisible}
-        title="Chọn hãng xe"
-        sections={brandSections}
-        selectedValue={form.brand}
-        onClose={() => setBrandPickerVisible(false)}
-        onSelect={selectBrand}
-      />
-
-      <SelectionSheet
-        visible={modelPickerVisible}
-        title={form.brand ? 'Chọn dòng xe - ' + form.brand : 'Chọn dòng xe'}
-        sections={modelSections}
-        selectedValue={form.model}
-        emptyMessage="Hãng xe này hiện chưa có dòng xe mẫu."
-        onClose={() => setModelPickerVisible(false)}
-        onSelect={selectModel}
-      />
-
-      <SelectionSheet
-        visible={yearPickerVisible}
-        title="Chọn năm sản xuất"
-        sections={yearSections}
-        selectedValue={form.year ? String(form.year) : ''}
-        onClose={() => setYearPickerVisible(false)}
-        onSelect={(value) => selectYear(Number(value))}
-      />
-    </>
   );
 }
 
@@ -357,7 +369,7 @@ function SelectionSheet({
   title,
   sections,
   selectedValue,
-  emptyMessage = 'Không có dữ liệu để chọn.',
+  emptyMessage = 'Chưa có lựa chọn phù hợp.',
   onClose,
   onSelect,
 }: {
@@ -370,10 +382,10 @@ function SelectionSheet({
   onSelect: (value: string) => void;
 }) {
   const hasOptions = sections.some((section) => section.options.length > 0);
+  if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={vehicleStyles.sheetBackdrop}>
+      <View accessibilityViewIsModal style={vehicleStyles.sheetBackdrop}>
         <Pressable style={vehicleStyles.sheetOverlay} onPress={onClose} />
         <View style={vehicleStyles.sheetCard}>
           <View style={vehicleStyles.sheetHeader}>
@@ -415,6 +427,5 @@ function SelectionSheet({
           </ScrollView>
         </View>
       </View>
-    </Modal>
   );
 }
