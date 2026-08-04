@@ -93,17 +93,19 @@ export function VehiclesScreen() {
     setModalVisible(true);
   };
 
-  const openEdit = (vehicle: Vehicle) => {
-    setEditing(vehicle);
-    setForm({
-      brand: vehicle.brand,
-      model: vehicle.model,
-      licensePlate: vehicle.licensePlate,
-      year: vehicle.year,
-      images: [],
-    });
-    setModalVisible(true);
-  };
+const openEdit = (vehicle: Vehicle) => {
+  setEditing(vehicle);
+
+  setForm({
+    brand: vehicle.brand,
+    model: vehicle.model,
+    licensePlate: vehicle.licensePlate,
+    year: vehicle.year,
+    images: [],
+  });
+
+  setModalVisible(true);
+};
 
   const closeForm = () => {
     setModalVisible(false);
@@ -117,6 +119,7 @@ export function VehiclesScreen() {
       model: form.model.trim(),
       licensePlate: form.licensePlate.replace(/\s+/g, '').toUpperCase(),
       year: form.year,
+      images: form.images ?? [],
     };
 
     if (!normalizedPayload.brand || !normalizedPayload.model || !normalizedPayload.licensePlate) {
