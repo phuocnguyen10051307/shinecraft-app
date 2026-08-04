@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -84,10 +84,8 @@ export function VehiclesScreen() {
     };
   }, [load]);
 
-  const totalImages = useMemo(
-    () => vehicles.reduce((sum, vehicle) => sum + (vehicle.images?.length ?? 0), 0),
-    [vehicles],
-  );
+  const pendingRequests = accessRequests.filter((request) => request.status === 'pending').length;
+  const approvedRequests = accessRequests.filter((request) => request.status === 'approved').length;
 
   const openCreate = () => {
     setEditing(null);
@@ -225,9 +223,10 @@ export function VehiclesScreen() {
         }>
         <View style={vehicleStyles.header}>
           <View style={vehicleStyles.headerText}>
+            <Text style={vehicleStyles.eyebrow}>QUẢN LÝ XE</Text>
             <Text style={vehicleStyles.title}>{'Xe của tôi'}</Text>
             <Text style={vehicleStyles.subtitle}>
-              {'Đồng bộ đúng theo luồng web và backend cho khách hàng.'}
+              {'Quản lý thông tin xe để đặt lịch và theo dõi lịch sử chăm sóc thuận tiện hơn.'}
             </Text>
           </View>
           {user?.role === 'customer' ? (
@@ -239,8 +238,8 @@ export function VehiclesScreen() {
 
         <View style={vehicleStyles.statsRow}>
           <SummaryCard label={'Tổng số xe'} value={String(vehicles.length)} />
-          <SummaryCard label={'Ảnh đang có'} value={String(totalImages)} />
-          <SummaryCard label={'Yêu cầu xác minh'} value={String(accessRequests.length)} />
+          <SummaryCard label={'Chờ xác minh'} value={String(pendingRequests)} />
+          <SummaryCard label={'Đã xác minh'} value={String(approvedRequests)} />
         </View>
 
         {loading ? (

@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 import { tokenStorage } from '@/lib/storage';
@@ -10,7 +11,6 @@ import type {
   LoyaltyAccount,
   LoyaltyTransaction,
   MembershipTier,
-  NotificationItem,
   Promotion,
   Reward,
   RewardRedemption,
@@ -24,7 +24,23 @@ import type {
   VehicleInput,
 } from '@/types';
 
-const fallbackHost = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+const getMetroHost = () => {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) return null;
+
+  try {
+    const url = new URL(hostUri.includes('://') ? hostUri : `http://${hostUri}`);
+    return url.hostname;
+  } catch {
+    return hostUri.split(':')[0] || null;
+  }
+};
+
+const metroHost = getMetroHost();
+const fallbackHost =
+  Platform.OS === 'web'
+    ? 'localhost'
+    : metroHost ?? (Platform.OS === 'android' ? '10.0.2.2' : 'localhost');
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? `http://${fallbackHost}:3000/api`;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -80,7 +96,7 @@ async function request<T>(path: string, options: RequestOptions = {}) {
     const message =
       error instanceof Error && error.name === 'AbortError'
         ? 'May chu phan hoi qua lau. Vui long thu lai.'
-        : `Khong the ket noi den API tai ${API_URL}.`;
+        : 'Không thể kết nối đến hệ thống. Vui lòng kiểm tra mạng và thử lại.';
     throw new ApiError(message, 0);
   } finally {
     clearTimeout(timeout);
@@ -301,29 +317,6 @@ export const serviceHistoriesApi = {
   },
   getMineById: async (serviceHistoryId: string) =>
     (await request<ServiceHistory>(`/service-histories/my/${serviceHistoryId}`)).data,
-};
-
-export const notificationsApi = {
-  listMy: async () => {
-    try {
-      return await unwrapList<NotificationItem>('/notifications/me?limit=100');
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) return [];
-      throw error;
-    }
-  },
-  getUnreadCount: async () => {
-    try {
-      return (await request<{ unreadCount: number }>('/notifications/me/unread-count')).data.unreadCount;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) return 0;
-      throw error;
-    }
-  },
-  markRead: async (notificationId: string) =>
-    (await request<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'PATCH' })).data,
-  markAllRead: async () =>
-    (await request<{ modifiedCount: number }>('/notifications/me/read-all', { method: 'PATCH' })).data,
 };
 
 export const dashboardApi = {

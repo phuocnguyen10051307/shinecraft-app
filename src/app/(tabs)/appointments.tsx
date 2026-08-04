@@ -11,18 +11,23 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 
 import { Screen } from '@/components/screen';
 import { colors } from '@/constants/shinecraft-theme';
 import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
-import { ApiError, appointmentsApi, promotionsApi, serviceCategoriesApi, servicesApi, vehiclesApi } from '@/lib/api';
+import { ApiError, appointmentsApi, loyaltyApi, promotionsApi, serviceCategoriesApi, servicesApi, vehiclesApi } from '@/lib/api';
+import { formatDuration } from '@/lib/format-duration';
 import type {
   Appointment,
   AppointmentStatus,
   AppointmentServiceSnapshot,
   CreateAppointmentInput,
+  LoyaltyAccount,
   Promotion,
+  Reward,
+  RewardRedemption,
   Service,
   ServiceCategory,
   Vehicle,
@@ -82,13 +87,6 @@ function formatCurrency(value?: number | null) {
   return `${value.toLocaleString('vi-VN')} đ`;
 }
 
-function formatDuration(minutes?: number | null) {
-  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return 'Chưa rõ thời lượng';
-  if (minutes < 60) return `${minutes} phút`;
-  const hours = Math.floor(minutes / 60);
-  const remaining = minutes % 60;
-  return remaining ? `${hours} giờ ${remaining} phút` : `${hours} giờ`;
-}
 function asNumber(value: unknown) {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : undefined;
@@ -141,31 +139,55 @@ function getPromotionLabel(promotion: Promotion) {
   return `${promotion.code} - Miễn phí dịch vụ áp dụng`;
 }
 
-function calculatePromotionDiscount(promotion: Promotion, subtotal: number, selectedServices: Service[]) {
-  if (subtotal <= 0) return 0;
+function calculatePriceAfterPercentageDiscount(price: number, discountPercent: number) {
+  const normalizedPrice = Math.max(0, Number(price || 0));
+  return Math.max(0, normalizedPrice - Math.round((normalizedPrice * Math.max(0, discountPercent)) / 100));
+}
 
+function calculatePromotionDiscount(
+  promotion: Promotion,
+  invoiceDiscountBase: number,
+  selectedServices: Service[],
+  membershipDiscountPercent = 0,
+) {
+  let discountBase = Math.max(0, invoiceDiscountBase);
+  if (promotion.targetType === 'service') {
+    const targetService = selectedServices.find(
+      (service) => service._id === getPromotionReferenceId(promotion.serviceId),
+    );
+    if (!targetService) return 0;
+    discountBase = calculatePriceAfterPercentageDiscount(targetService.price, membershipDiscountPercent);
+  }
+
+  let calculatedAmount = 0;
   if (promotion.type === 'percentage') {
-    const discountBase =
-      promotion.targetType === 'service'
-        ? selectedServices
-            .filter((service) => service._id === getPromotionReferenceId(promotion.serviceId))
-            .reduce((total, service) => total + service.price, 0)
-        : subtotal;
-    const rawDiscount = Math.round((discountBase * Number(promotion.discountValue ?? 0)) / 100);
-    return Math.min(subtotal, promotion.maxDiscountAmount ? Math.min(rawDiscount, promotion.maxDiscountAmount) : rawDiscount);
+    calculatedAmount = Math.round((discountBase * Math.max(0, Number(promotion.discountValue ?? 0))) / 100);
+  } else if (promotion.type === 'fixed_amount') {
+    calculatedAmount = Math.round(Math.max(0, Number(promotion.discountValue ?? 0)));
+  } else if (promotion.type === 'free_service') {
+    calculatedAmount = Math.round(discountBase);
   }
 
-  if (promotion.type === 'fixed_amount') {
-    return Math.min(subtotal, Math.round(Number(promotion.discountValue ?? 0)));
-  }
+  const cappedAmount = promotion.maxDiscountAmount == null
+    ? calculatedAmount
+    : Math.min(calculatedAmount, Math.max(0, Number(promotion.maxDiscountAmount)));
+  return Math.min(discountBase, Math.max(0, cappedAmount));
+}
 
-  if (promotion.type === 'free_service') {
-    const serviceId = getPromotionReferenceId(promotion.serviceId);
-    const targetService = selectedServices.find((service) => service._id === serviceId);
-    return targetService ? Math.min(subtotal, targetService.price) : 0;
-  }
+function getRedemptionReward(redemption: RewardRedemption) {
+  return typeof redemption.rewardId === 'object' && redemption.rewardId ? redemption.rewardId : null;
+}
 
-  return 0;
+function calculateRewardDiscount(reward: Reward, discountBase: number) {
+  const normalizedBase = Math.max(0, discountBase);
+  const normalizedValue = Math.max(0, Number(reward.discountValue ?? 0));
+  const rawDiscount = reward.discountType === 'percentage'
+    ? Math.round((normalizedBase * normalizedValue) / 100)
+    : Math.round(normalizedValue);
+  const cappedDiscount = reward.maxDiscountAmount == null
+    ? rawDiscount
+    : Math.min(rawDiscount, Math.max(0, Number(reward.maxDiscountAmount)));
+  return Math.min(normalizedBase, cappedDiscount);
 }
 
 
@@ -176,6 +198,8 @@ export default function AppointmentsScreen() {
   const [services, setServices] = useState<Service[]>([]);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [loyaltyAccount, setLoyaltyAccount] = useState<LoyaltyAccount | null>(null);
+  const [redemptions, setRedemptions] = useState<RewardRedemption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(false);
@@ -185,7 +209,6 @@ export default function AppointmentsScreen() {
   const [cancelAppointment, setCancelAppointment] = useState<Appointment | null>(null);
   const [filter, setFilter] = useState<'all' | 'upcoming' | AppointmentStatus>('all');
   const [keyword, setKeyword] = useState('');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [currentTime, setCurrentTime] = useState(0);
 
   const handleError = useCallback(
@@ -220,16 +243,20 @@ export default function AppointmentsScreen() {
     if (!user || user.role !== 'customer') return;
     setOptionsLoading(true);
     try {
-      const [nextVehicles, nextServices, nextCategories, nextPromotions] = await Promise.all([
+      const [nextVehicles, nextServices, nextCategories, nextPromotions, nextAccount, nextRedemptions] = await Promise.all([
         vehiclesApi.list(user.role),
         servicesApi.listActive(),
         serviceCategoriesApi.listActive(),
         promotionsApi.listActive(),
+        loyaltyApi.getMyAccount(),
+        loyaltyApi.getMyRedemptions(),
       ]);
       setVehicles(nextVehicles);
       setServices(nextServices);
       setCategories(nextCategories);
       setPromotions(nextPromotions);
+      setLoyaltyAccount(nextAccount);
+      setRedemptions(nextRedemptions);
     } catch (error) {
       await handleError(error, 'Không tải được dữ liệu đặt lịch');
     } finally {
@@ -278,18 +305,12 @@ export default function AppointmentsScreen() {
           .toLowerCase();
 
         return searchContent.includes(normalizedKeyword);
-      })
-      .sort((a, b) => {
-        const diff = new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
-        return sortOrder === 'asc' ? diff : -diff;
       });
-  }, [currentTime, filter, keyword, sortOrder, validAppointments]);
+  }, [currentTime, filter, keyword, validAppointments]);
 
   const openBooking = async () => {
     if (user?.role !== 'customer') return;
-    if (!vehicles.length || !services.length) {
-      await loadBookingOptions();
-    }
+    await loadBookingOptions();
     setBookingVisible(true);
   };
 
@@ -338,7 +359,7 @@ export default function AppointmentsScreen() {
         }>
         <View style={styles.header}>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>SHINECRAFT BOOKING</Text>
+            <Text style={styles.eyebrow}>ĐẶT LỊCH CÙNG SHINECRAFT</Text>
             <Text style={styles.title}>Lịch hẹn của bạn</Text>
             <Text style={styles.subtitle}>Đặt dịch vụ và theo dõi tiến độ chăm sóc xe.</Text>
           </View>
@@ -350,16 +371,16 @@ export default function AppointmentsScreen() {
         </View>
 
         {user?.role === 'customer' ? (
-          <Pressable onPress={() => void openBooking()} style={styles.bookingBanner}>
-            <View style={styles.bannerIcon}>
-              <Text style={styles.bannerIconText}>SC</Text>
-            </View>
-            <View style={styles.bannerCopy}>
-              <Text style={styles.bannerTitle}>Đặt lịch chăm sóc xe</Text>
-              <Text style={styles.bannerText}>Chọn xe, nhiều dịch vụ và thời gian phù hợp.</Text>
-            </View>
-            <Text style={styles.bannerArrow}>›</Text>
-          </Pressable>
+          <View style={styles.customerActions}>
+            <Pressable onPress={() => void openBooking()} style={styles.bookingBanner}>
+              <View style={styles.bannerIcon}><Text style={styles.bannerIconText}>SC</Text></View>
+              <View style={styles.bannerCopy}><Text style={styles.bannerTitle}>Đặt lịch chăm sóc xe</Text><Text style={styles.bannerText}>Chọn xe, dịch vụ và thời gian phù hợp.</Text></View>
+              <Text style={styles.bannerArrow}>›</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push('/service-histories')} style={styles.historyButton}>
+              <Text style={styles.historyButtonText}>Xem lịch sử dịch vụ</Text>
+            </Pressable>
+          </View>
         ) : null}
 
         <View style={styles.stats}>
@@ -396,19 +417,6 @@ export default function AppointmentsScreen() {
               </Pressable>
             ))}
           </ScrollView>
-          <View style={styles.sortRow}>
-            {[
-              ['desc', 'Mới nhất'],
-              ['asc', 'Cũ nhất'],
-            ].map(([value, label]) => (
-              <Pressable
-                key={value}
-                onPress={() => setSortOrder(value as 'asc' | 'desc')}
-                style={[styles.sortButton, sortOrder === value && styles.sortButtonActive]}>
-                <Text style={[styles.sortText, sortOrder === value && styles.sortTextActive]}>{label}</Text>
-              </Pressable>
-            ))}
-          </View>
         </View>
 
         {loading ? (
@@ -438,6 +446,8 @@ export default function AppointmentsScreen() {
           services={services}
           categories={categories}
           promotions={promotions}
+          loyaltyAccount={loyaltyAccount}
+          redemptions={redemptions}
           loading={optionsLoading}
           saving={saving}
           onClose={() => setBookingVisible(false)}
@@ -476,6 +486,11 @@ function AppointmentCard({
     ? `${vehicle.brand ?? 'Xe'} ${vehicle.model ?? ''} - ${vehicle.licensePlate ?? 'Chưa có biển số'}`
     : 'Xe - Chưa có biển số';
   const appointmentPrice = getAppointmentPrice(appointment);
+  const subtotalPrice = asNumber(appointment.subtotalPrice) ?? services.reduce((total, service) => total + getServicePrice(service), 0);
+  const membershipDiscount = asNumber(appointment.membershipTierDiscountSnapshot?.discountAmount) ?? 0;
+  const promotionDiscount = asNumber(appointment.promotionDiscountSnapshot?.discountAmount) ?? 0;
+  const rewardDiscount = asNumber(appointment.rewardDiscountSnapshot?.discountAmount) ?? 0;
+  const totalDiscount = asNumber(appointment.discountAmount) ?? membershipDiscount + promotionDiscount + rewardDiscount;
   const appointmentDuration = getAppointmentDuration(appointment);
   const canCancel =
     Boolean(appointment._id) && allowCancel && appointment.status === 'pending';
@@ -502,10 +517,21 @@ function AppointmentCard({
           <Text style={styles.durationText}>Dự kiến {formatDuration(appointmentDuration)}</Text>
         </View>
         <View style={styles.priceWrap}>
-          <Text style={styles.metaLabel}>TẠM TÍNH</Text>
+          <Text style={styles.metaLabel}>THÀNH TIỀN</Text>
           <Text style={styles.price}>{formatCurrency(appointmentPrice)}</Text>
         </View>
       </View>
+      {totalDiscount > 0 ? (
+        <View style={styles.appliedBenefits}>
+          <View style={styles.appliedBenefitHeader}>
+            <Text style={styles.appliedBenefitTitle}>Ưu đãi đã áp dụng</Text>
+            <Text style={styles.originalPrice}>{formatCurrency(subtotalPrice)}</Text>
+          </View>
+          {membershipDiscount > 0 ? <BenefitLine label={`Hạng ${appointment.membershipTierDiscountSnapshot?.name ?? 'thành viên'}`} amount={membershipDiscount} /> : null}
+          {promotionDiscount > 0 ? <BenefitLine label={`Khuyến mãi ${appointment.promotionDiscountSnapshot?.code ?? ''}`.trim()} amount={promotionDiscount} /> : null}
+          {rewardDiscount > 0 ? <BenefitLine label={appointment.rewardDiscountSnapshot?.name ?? 'Ưu đãi đã đổi'} amount={rewardDiscount} /> : null}
+        </View>
+      ) : null}
       {appointment.note ? <Text style={styles.appointmentNote}>{appointment.note}</Text> : null}
       {canCancel ? (
         <Pressable onPress={() => onCancel(appointment)} style={styles.cancelButton}>
@@ -516,11 +542,17 @@ function AppointmentCard({
   );
 }
 
+function BenefitLine({ label, amount }: { label: string; amount: number }) {
+  return <View style={styles.benefitLine}><Text style={styles.benefitLabel}>{label}</Text><Text style={styles.benefitAmount}>-{formatCurrency(amount)}</Text></View>;
+}
+
 function BookingModal({
   vehicles,
   services,
   categories,
   promotions,
+  loyaltyAccount,
+  redemptions,
   loading,
   saving,
   onClose,
@@ -531,12 +563,15 @@ function BookingModal({
   services: Service[];
   categories: ServiceCategory[];
   promotions: Promotion[];
+  loyaltyAccount: LoyaltyAccount | null;
+  redemptions: RewardRedemption[];
   loading: boolean;
   saving: boolean;
   onClose: () => void;
   onSubmit: (input: CreateAppointmentInput) => Promise<void>;
   onRetry: () => Promise<void>;
 }) {
+  const insets = useSafeAreaInsets();
   const dates = useMemo(() => createBookingDates(), []);
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [vehicleId, setVehicleId] = useState('');
@@ -544,6 +579,7 @@ function BookingModal({
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [promotionId, setPromotionId] = useState('');
+  const [rewardRedemptionId, setRewardRedemptionId] = useState('');
   const [scheduledDate, setScheduledDate] = useState(dates[0].value);
   const [scheduledTime, setScheduledTime] = useState('09:00');
   const [note, setNote] = useState('');
@@ -600,17 +636,42 @@ function BookingModal({
   const selectedServices = services.filter((service) => serviceIds.includes(service._id));
   const totalPrice = selectedServices.reduce((total, service) => total + service.price, 0);
   const totalDuration = selectedServices.reduce((total, service) => total + service.estimatedDuration, 0);
+  const membershipTier =
+    typeof loyaltyAccount?.membershipTierId === 'object' ? loyaltyAccount.membershipTierId : null;
+  const membershipDiscountPercent = Math.max(0, Number(membershipTier?.discountPercent ?? 0));
+  const membershipDiscount = Math.min(
+    totalPrice,
+    Math.round((totalPrice * membershipDiscountPercent) / 100),
+  );
+  const priceAfterMembership = Math.max(0, totalPrice - membershipDiscount);
   const eligiblePromotions = promotions.filter((promotion) => {
     if (totalPrice < Number(promotion.minOrderAmount ?? 0)) return false;
     if (promotion.type === 'free_service' && !getPromotionReferenceId(promotion.serviceId)) return false;
     if (promotion.targetType !== 'service') return true;
     return selectedServices.some((service) => service._id === getPromotionReferenceId(promotion.serviceId));
   });
+  const availableRedemptions = redemptions.filter((redemption) => {
+    if (redemption.status !== 'available') return false;
+    const reward = getRedemptionReward(redemption);
+    if (!reward || reward.isActive === false) return false;
+    if (reward.expiredAt && new Date(reward.expiredAt) <= new Date()) return false;
+    return totalPrice >= Number(reward.minOrderAmount ?? 0);
+  });
   const selectedPromotion = eligiblePromotions.find((promotion) => promotion._id === promotionId) ?? null;
+  const selectedRedemption = availableRedemptions.find((item) => item._id === rewardRedemptionId) ?? null;
+  const selectedReward = selectedRedemption ? getRedemptionReward(selectedRedemption) : null;
   const promotionDiscount = selectedPromotion
-    ? calculatePromotionDiscount(selectedPromotion, totalPrice, selectedServices)
+    ? calculatePromotionDiscount(
+        selectedPromotion,
+        priceAfterMembership,
+        selectedServices,
+        membershipDiscountPercent,
+      )
     : 0;
-  const estimatedTotal = Math.max(0, totalPrice - promotionDiscount);
+  const priceAfterPromotion = Math.max(0, priceAfterMembership - promotionDiscount);
+  const rewardDiscount = selectedReward ? calculateRewardDiscount(selectedReward, priceAfterPromotion) : 0;
+  const estimatedDiscount = membershipDiscount + promotionDiscount + rewardDiscount;
+  const estimatedTotal = Math.max(0, totalPrice - estimatedDiscount);
 
   const selectVehicle = (nextVehicleId: string) => {
     setVehicleId(nextVehicleId);
@@ -618,6 +679,7 @@ function BookingModal({
     setCategoryMenuOpen(false);
     setServiceIds([]);
     setPromotionId('');
+    setRewardRedemptionId('');
   };
 
   const selectCategory = (nextCategoryId: string) => {
@@ -625,6 +687,7 @@ function BookingModal({
     setCategoryMenuOpen(false);
     setServiceIds([]);
     setPromotionId('');
+    setRewardRedemptionId('');
   };
 
   const toggleService = (serviceId: string) => {
@@ -634,6 +697,7 @@ function BookingModal({
         : [...current, serviceId],
     );
     setPromotionId('');
+    setRewardRedemptionId('');
   };
 
   const goNext = () => {
@@ -667,6 +731,7 @@ function BookingModal({
       scheduledAt: scheduledAt.toISOString(),
       note: note.trim() || undefined,
       promotionId: promotionId || undefined,
+      rewardRedemptionId: rewardRedemptionId || undefined,
     });
   };
 
@@ -687,8 +752,12 @@ function BookingModal({
     (step === 2 && !selectedServices.length);
 
   return (
-    <Modal visible animationType="slide" onRequestClose={goBack}>
-      <SafeAreaView style={styles.modalSafe}>
+    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={goBack}>
+      <View
+        style={[
+          styles.modalSafe,
+          { paddingTop: Math.max(insets.top, 12), paddingBottom: Math.max(insets.bottom, 12) },
+        ]}>
         <View style={styles.modalHeader}>
           <View style={styles.modalHeaderCopy}>
             <Text style={styles.modalTitle}>Đặt lịch mới</Text>
@@ -700,7 +769,7 @@ function BookingModal({
                   : 'Chọn thời gian hẹn và kiểm tra lại tổng tiền.'}
             </Text>
           </View>
-          <Pressable disabled={saving} onPress={goBack}>
+          <Pressable disabled={saving} hitSlop={10} onPress={goBack} style={styles.modalCloseButton}>
             <Text style={styles.closeText}>{step === 0 ? 'Đóng' : 'Quay lại'}</Text>
           </Pressable>
         </View>
@@ -905,40 +974,61 @@ function BookingModal({
                     />
                   </FormSection>
 
-                  <FormSection title="Khuyến mãi" caption="Mỗi lịch hẹn chỉ dùng một khuyến mãi phù hợp.">
-                    {eligiblePromotions.length ? (
-                      <>
+                  <FormSection
+                    title="Ưu đãi"
+                    caption={membershipDiscountPercent > 0
+                      ? `Hạng ${membershipTier?.name} được tự động giảm ${membershipDiscountPercent}%. Bạn có thể chọn thêm một khuyến mãi hoặc một ưu đãi đã đổi.`
+                      : 'Bạn có thể chọn một khuyến mãi hoặc một ưu đãi đã đổi phù hợp.'}>
+                    <Pressable
+                      onPress={() => { setPromotionId(''); setRewardRedemptionId(''); }}
+                      style={[styles.serviceCard, !promotionId && !rewardRedemptionId && styles.selectCardActive]}>
+                      <View style={styles.selectCopy}>
+                        <Text style={styles.selectTitle}>Không dùng thêm ưu đãi</Text>
+                        <Text style={styles.selectDescription}>{membershipDiscountPercent > 0 ? 'Vẫn áp dụng giảm giá theo hạng thành viên.' : 'Không áp dụng thêm khuyến mãi hoặc ưu đãi đã đổi.'}</Text>
+                      </View>
+                      <SelectionMark selected={!promotionId && !rewardRedemptionId} />
+                    </Pressable>
+
+                    {eligiblePromotions.map((promotion) => {
+                      const selected = promotionId === promotion._id;
+                      return (
                         <Pressable
-                          onPress={() => setPromotionId('')}
-                          style={[styles.serviceCard, !promotionId && styles.selectCardActive]}>
+                          key={promotion._id}
+                          onPress={() => { setPromotionId(promotion._id); setRewardRedemptionId(''); }}
+                          style={[styles.serviceCard, selected && styles.selectCardActive]}>
                           <View style={styles.selectCopy}>
-                            <Text style={styles.selectTitle}>Không sử dụng khuyến mãi</Text>
-                            <Text style={styles.selectDescription}>Giữ nguyên tạm tính cho lịch hẹn này.</Text>
+                            <Text style={styles.benefitType}>KHUYẾN MÃI</Text>
+                            <Text style={styles.selectTitle}>{promotion.title}</Text>
+                            <Text style={styles.selectDescription}>{getPromotionLabel(promotion)}</Text>
+                            {promotion.description?.trim() ? <Text style={styles.serviceMeta}>{promotion.description}</Text> : null}
                           </View>
-                          <SelectionMark selected={!promotionId} />
+                          <SelectionMark selected={selected} />
                         </Pressable>
-                        {eligiblePromotions.map((promotion) => {
-                          const selected = promotionId === promotion._id;
-                          return (
-                            <Pressable
-                              key={promotion._id}
-                              onPress={() => setPromotionId(promotion._id)}
-                              style={[styles.serviceCard, selected && styles.selectCardActive]}>
-                              <View style={styles.selectCopy}>
-                                <Text style={styles.selectTitle}>{promotion.title}</Text>
-                                <Text style={styles.selectDescription}>{getPromotionLabel(promotion)}</Text>
-                                {promotion.description?.trim() ? (
-                                  <Text style={styles.serviceMeta}>{promotion.description}</Text>
-                                ) : null}
-                              </View>
-                              <SelectionMark selected={selected} />
-                            </Pressable>
-                          );
-                        })}
-                      </>
-                    ) : (
-                      <Text style={styles.helperBox}>Chưa có khuyến mãi phù hợp với các dịch vụ đã chọn.</Text>
-                    )}
+                      );
+                    })}
+
+                    {availableRedemptions.map((redemption) => {
+                      const reward = getRedemptionReward(redemption);
+                      const selected = rewardRedemptionId === redemption._id;
+                      return reward ? (
+                        <Pressable
+                          key={redemption._id}
+                          onPress={() => { setRewardRedemptionId(redemption._id); setPromotionId(''); }}
+                          style={[styles.serviceCard, selected && styles.selectCardActive]}>
+                          <View style={styles.selectCopy}>
+                            <Text style={styles.benefitType}>ƯU ĐÃI ĐÃ ĐỔI</Text>
+                            <Text style={styles.selectTitle}>{reward.name}</Text>
+                            <Text style={styles.selectDescription}>Giảm {formatCurrency(reward.discountValue)}</Text>
+                            <Text style={styles.serviceMeta}>Đã dùng {redemption.pointsUsed.toLocaleString('vi-VN')} điểm để đổi</Text>
+                          </View>
+                          <SelectionMark selected={selected} />
+                        </Pressable>
+                      ) : null;
+                    })}
+
+                    {!eligiblePromotions.length && !availableRedemptions.length ? (
+                      <Text style={styles.helperBox}>Chưa có ưu đãi bổ sung phù hợp với các dịch vụ đã chọn.</Text>
+                    ) : null}
                   </FormSection>
 
                   <View style={styles.summaryCard}>
@@ -948,8 +1038,14 @@ function BookingModal({
                     <SummaryRow label="Thời lượng" value={formatDuration(totalDuration)} />
                     <View style={styles.summaryDivider} />
                     <SummaryRow label="Tạm tính" value={formatCurrency(totalPrice)} strong />
+                    {membershipDiscount > 0 ? (
+                      <SummaryRow label={`Hạng thành viên (${membershipTier?.name})`} value={`-${formatCurrency(membershipDiscount)}`} accent />
+                    ) : null}
                     {promotionDiscount > 0 ? (
-                      <SummaryRow label="Khuyến mãi" value={`-${formatCurrency(promotionDiscount)}`} strong />
+                      <SummaryRow label={`Khuyến mãi (${selectedPromotion?.code})`} value={`-${formatCurrency(promotionDiscount)}`} accent />
+                    ) : null}
+                    {rewardDiscount > 0 ? (
+                      <SummaryRow label={`Ưu đãi (${selectedReward?.name})`} value={`-${formatCurrency(rewardDiscount)}`} accent />
                     ) : null}
                     <SummaryRow label="Tổng dự kiến" value={formatCurrency(estimatedTotal)} strong />
                   </View>
@@ -964,7 +1060,7 @@ function BookingModal({
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.continueText}>{footerLabel}</Text>}
           </Pressable>
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -1055,15 +1151,17 @@ function SummaryRow({
   label,
   value,
   strong = false,
+  accent = false,
 }: {
   label: string;
   value: string;
   strong?: boolean;
+  accent?: boolean;
 }) {
   return (
     <View style={styles.summaryRow}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={[styles.summaryValue, strong && styles.summaryStrong]}>{value}</Text>
+      <Text style={[styles.summaryLabel, accent && styles.summaryAccent]}>{label}</Text>
+      <Text style={[styles.summaryValue, strong && styles.summaryStrong, accent && styles.summaryAccent]}>{value}</Text>
     </View>
   );
 }
@@ -1085,7 +1183,10 @@ const styles = StyleSheet.create({
   subtitle: { color: colors.muted, marginTop: 5, lineHeight: 19 },
   addButton: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   addButtonIcon: { color: '#fff', fontSize: 30, fontWeight: '400', marginTop: -3 },
+  customerActions: { gap: 10 },
   bookingBanner: { flexDirection: 'row', alignItems: 'center', padding: 18, borderRadius: 21, backgroundColor: colors.ink, gap: 13 },
+  historyButton: { minHeight: 46, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  historyButtonText: { color: colors.primary, fontWeight: '800' },
   bannerIcon: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   bannerIconText: { color: '#fff', fontWeight: '900', fontSize: 12 },
   bannerCopy: { flex: 1 },
@@ -1103,11 +1204,6 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
   filterChipText: { color: colors.muted, fontSize: 12, fontWeight: '800' },
   filterChipTextActive: { color: '#fff' },
-  sortRow: { flexDirection: 'row', gap: 8 },
-  sortButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 11, backgroundColor: colors.background },
-  sortButtonActive: { backgroundColor: colors.tint },
-  sortText: { color: colors.muted, fontWeight: '800' },
-  sortTextActive: { color: colors.primary },
   loader: { paddingVertical: 50 },
   card: { padding: 18, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 8 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
@@ -1124,6 +1220,13 @@ const styles = StyleSheet.create({
   priceWrap: { alignItems: 'flex-end' },
   price: { color: colors.ink, fontSize: 14, fontWeight: '900', marginTop: 4 },
   appointmentNote: { color: colors.muted, lineHeight: 19, padding: 11, borderRadius: 12, backgroundColor: colors.background },
+  appliedBenefits: { padding: 12, borderRadius: 13, backgroundColor: '#ecfdf3', gap: 7 },
+  appliedBenefitHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  appliedBenefitTitle: { color: colors.success, fontSize: 12, fontWeight: '900' },
+  originalPrice: { color: colors.muted, fontSize: 12, textDecorationLine: 'line-through' },
+  benefitLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  benefitLabel: { color: colors.muted, flex: 1, fontSize: 12 },
+  benefitAmount: { color: colors.success, fontSize: 12, fontWeight: '800' },
   cancelButton: { alignSelf: 'flex-end', paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: '#fef3f2' },
   cancelButtonText: { color: colors.danger, fontWeight: '800' },
   empty: { alignItems: 'center', padding: 30, borderRadius: 18, backgroundColor: colors.surface },
@@ -1132,6 +1235,7 @@ const styles = StyleSheet.create({
   modalSafe: { flex: 1, backgroundColor: colors.background },
   modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: 20, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   modalHeaderCopy: { flex: 1 },
+  modalCloseButton: { minWidth: 68, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
   stepper: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingHorizontal: 20, paddingVertical: 14, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   stepItem: { flex: 1, alignItems: 'center', gap: 6 },
   stepDot: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
@@ -1142,7 +1246,7 @@ const styles = StyleSheet.create({
   stepLabelActive: { color: colors.ink },
   modalTitle: { color: colors.ink, fontSize: 25, fontWeight: '900' },
   modalSubtitle: { color: colors.muted, marginTop: 4 },
-  closeText: { color: colors.primary, fontWeight: '800', paddingTop: 5 },
+  closeText: { color: colors.primary, fontWeight: '800' },
   modalContent: { padding: 20, paddingBottom: 34, gap: 18 },
   modalLoader: { paddingVertical: 70 },
   optionError: { alignItems: 'center', padding: 24, borderRadius: 18, backgroundColor: colors.surface },
@@ -1181,6 +1285,7 @@ const styles = StyleSheet.create({
   selectTitle: { color: colors.ink, fontSize: 15, fontWeight: '900' },
   selectDescription: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
   serviceMeta: { color: colors.primary, fontSize: 12, fontWeight: '800', marginTop: 8 },
+  benefitType: { color: colors.primary, fontSize: 10, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 },
   selectionMark: { width: 23, height: 23, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#cbd1da' },
   selectionSquare: { borderRadius: 6 },
   selectionMarkActive: { borderColor: colors.primary, backgroundColor: colors.primary },
@@ -1205,6 +1310,7 @@ const styles = StyleSheet.create({
   summaryLabel: { color: colors.muted, fontSize: 13 },
   summaryValue: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '800', textAlign: 'right' },
   summaryStrong: { color: colors.primary, fontSize: 17, fontWeight: '900' },
+  summaryAccent: { color: colors.success, fontWeight: '800' },
   summaryDivider: { height: 1, backgroundColor: colors.border },
   footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface },
   continueButton: { minHeight: 54, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: colors.primary },

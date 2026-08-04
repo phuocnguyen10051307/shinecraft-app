@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { router } from 'expo-router';
 import { ActivityIndicator, Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
 import { colors } from '@/constants/shinecraft-theme';
 import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
 import { ApiError, serviceHistoriesApi, vehiclesApi } from '@/lib/api';
+import { formatDuration } from '@/lib/format-duration';
 import type { ServiceHistory, Vehicle } from '@/types';
 
 const allVehiclesValue = 'all';
@@ -22,6 +24,14 @@ function formatDate(value?: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatPaymentStatus(status?: string | null) {
+  if (status === 'paid') return 'Đã thanh toán';
+  if (status === 'unpaid') return 'Chưa thanh toán';
+  if (status === 'refunded') return 'Đã hoàn tiền';
+  if (status === 'partially_refunded') return 'Hoàn tiền một phần';
+  return 'Chưa có thông tin';
 }
 
 export default function ServiceHistoriesScreen() {
@@ -88,7 +98,7 @@ export default function ServiceHistoriesScreen() {
       <Screen>
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>Chức năng này hiện dành cho khách hàng</Text>
-          <Text style={styles.emptyText}>Lịch sử dịch vụ trên app hiện chỉ mở cho tài khoản khách hàng.</Text>
+          <Text style={styles.emptyText}>Lịch sử dịch vụ trên ứng dụng hiện chỉ dành cho tài khoản khách hàng.</Text>
         </View>
       </Screen>
     );
@@ -105,6 +115,9 @@ export default function ServiceHistoriesScreen() {
           }}
         />
       }>
+      <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backButton}>
+        <Text style={styles.backText}>← Quay lại</Text>
+      </Pressable>
       <View style={styles.header}>
         <Text style={styles.title}>Lịch sử dịch vụ</Text>
         <Text style={styles.subtitle}>
@@ -165,7 +178,7 @@ export default function ServiceHistoriesScreen() {
             </Text>
             <Text style={styles.cardServices}>{item.services.map((service) => service.nameSnapshot).join(', ')}</Text>
             <View style={styles.cardMetaRow}>
-              <InfoPill label={`Thời lượng ${item.totalEstimatedDuration} phút`} />
+              <InfoPill label={`Thời lượng ${formatDuration(item.totalEstimatedDuration)}`} />
               <InfoPill label={formatCurrency(item.totalPrice)} strong />
             </View>
             {item.nextMaintenanceDate ? (
@@ -183,7 +196,7 @@ export default function ServiceHistoriesScreen() {
                 <DetailRow label="Xe" value={`${detail.vehicleId.brand} ${detail.vehicleId.model} - ${detail.vehicleId.licensePlate}`} />
                 <DetailRow label="Hoàn thành lúc" value={formatDate(detail.servicedAt)} />
                 <DetailRow label="Nhân viên" value={detail.handledBy?.displayName ?? '-'} />
-                <DetailRow label="Thanh toán" value={detail.appointmentId.paymentStatus ?? '-'} />
+                <DetailRow label="Thanh toán" value={formatPaymentStatus(detail.appointmentId.paymentStatus)} />
                 <DetailRow label="Tổng chi phí" value={formatCurrency(detail.totalPrice)} />
                 <DetailRow label="Dịch vụ" value={detail.services.map((service) => service.nameSnapshot).join(', ')} />
                 {detail.note ? <DetailRow label="Ghi chú" value={detail.note} /> : null}
@@ -235,6 +248,8 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  backButton: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' },
+  backText: { color: colors.primary, fontWeight: '800' },
   header: { gap: 6 },
   title: { color: colors.ink, fontSize: 29, fontWeight: '900' },
   subtitle: { color: colors.muted, lineHeight: 20 },

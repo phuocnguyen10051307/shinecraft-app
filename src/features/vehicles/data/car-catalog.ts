@@ -123,9 +123,9 @@ export const carBrands = [
 ];
 
 export const carModelsByBrand: Record<string, string[]> = {
-  Abarth: ['124 Spider Pháp', '500', '595', '695'],
+  Abarth: ['124 Spider', '500', '595', '695'],
   Acura: ['ILX', 'Integra', 'MDX', 'NSX', 'RDX', 'RLX', 'TLX', 'TSX', 'ZDX'],
-  AITO: ['M5', 'M7', 'M9 Việt Nam'],
+  AITO: ['M5', 'M7', 'M9'],
   'Alfa Romeo': [
     '147',
     '156',
@@ -313,7 +313,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Jumpy',
   ],
   CUPRA: ['Ateca', 'Born', 'Formentor', 'Leon', 'Tavascan', 'Terramar'],
-  Dacia: ['Dokker', 'Duster', 'Jogger', 'Lodgy', 'Logan', 'Sandero', 'Spring Thụy Điển'],
+  Dacia: ['Dokker', 'Duster', 'Jogger', 'Lodgy', 'Logan', 'Sandero', 'Spring'],
   Daewoo: [
     'Gentra',
     'Lacetti',
@@ -323,7 +323,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Matiz',
     'Nubira',
     'Rezzo',
-    'Tosca Anh',
+    'Tosca',
   ],
   Daihatsu: [
     'Ayla',
@@ -388,7 +388,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Toro',
     'Uno',
   ],
-  Fisker: ['Alaska', 'Karma', 'Ocean', 'Pear', 'Ronin Hàn Quốc'],
+  Fisker: ['Alaska', 'Karma', 'Ocean', 'Pear', 'Ronin'],
   Ford: [
     'Bronco',
     'Bronco Sport',
@@ -484,7 +484,7 @@ export const carModelsByBrand: Record<string, string[]> = {
   ],
   'IM Motors': ['L6', 'L7', 'LS6', 'LS7'],
   Infiniti: ['FX', 'Q50', 'Q60', 'Q70', 'QX30', 'QX50', 'QX55', 'QX60', 'QX70', 'QX80'],
-  Isuzu: ['Ascender', 'Axiom', 'D-Max', 'Elf/N-Series', 'Forward/F-Series Đức', 'MU-X', 'Trooper'],
+  Isuzu: ['Ascender', 'Axiom', 'D-Max', 'Elf/N-Series', 'Forward/F-Series', 'MU-X', 'Trooper'],
   JAC: ['e-JS1', 'J2', 'J3', 'J4', 'J5', 'S2', 'S3', 'S4', 'T6', 'T8'],
   Jaguar: ['E-Pace', 'F-Pace', 'F-Type', 'I-Pace', 'S-Type', 'XE', 'XF', 'XJ', 'XK', 'X-Type'],
   Jeep: [
@@ -608,7 +608,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Brezza',
     'Ciaz',
     'Dzire',
-    'Eeco Khác',
+    'Eeco',
     'Ertiga',
     'Fronx',
     'Grand Vitara',
@@ -629,7 +629,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Spyder',
   ],
   Maxus: ['D60', 'G10', 'G50', 'G90', 'Mifa 9', 'T60', 'T70'],
-  Maybach: ['57', '62', 'GLS Maybach Mỹ', 'S-Class Maybach'],
+  Maybach: ['57', '62', 'GLS Maybach', 'S-Class Maybach'],
   Mazda: [
     'BT-50',
     'CX-3',
@@ -712,7 +712,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'Triton/L200',
     'Xpander',
   ],
-  Morgan: ['3 Wheeler', 'Aero 8', 'Plus 4', 'Plus 6', 'Super 3 Ý'],
+  Morgan: ['3 Wheeler', 'Aero 8', 'Plus 4', 'Plus 6', 'Super 3'],
   NIO: ['EC6', 'EC7', 'ES6', 'ES7/EL7', 'ES8', 'ET5', 'ET7', 'ET9'],
   Nissan: [
     'Almera/Versa',
@@ -805,7 +805,7 @@ export const carModelsByBrand: Record<string, string[]> = {
   Rivian: ['EDV', 'R1S', 'R1T', 'R2', 'R3'],
   Roewe: ['D7', 'i5', 'i6', 'Marvel X', 'RX5', 'RX8'],
   'Rolls-Royce': ['Cullinan', 'Dawn', 'Ghost', 'Phantom', 'Silver Seraph', 'Spectre', 'Wraith'],
-  Saab: ['900', '9000 Trung Quốc', '9-2X', '9-3', '9-4X', '9-5'],
+  Saab: ['900', '9000', '9-2X', '9-3', '9-4X', '9-5'],
   Saturn: ['Astra', 'Aura', 'Ion', 'Outlook', 'Sky', 'S-Series', 'Vue'],
   Scion: ['FR-S', 'iA', 'iM', 'tC', 'xA', 'xB', 'xD'],
   'Scout Motors': ['Terra', 'Traveler'],
@@ -901,7 +901,7 @@ export const carModelsByBrand: Record<string, string[]> = {
     'VF 6',
     'VF 7',
     'VF 8',
-    'VF 9 Ấn Độ',
+    'VF 9',
     'VF e34',
   ],
   Volkswagen: [
