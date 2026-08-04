@@ -1,12 +1,17 @@
 import { Redirect, Tabs } from 'expo-router';
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
-import { StyleSheet, type ColorValue } from 'react-native';
+import { StyleSheet, Text, type ColorValue } from 'react-native';
 
 import { colors } from '@/constants/shinecraft-theme';
 import { useAuth } from '@/contexts/auth-context';
 
-const TabIcon = ({ name, color }: { name: SymbolViewProps['name']; color: ColorValue }) => (
-  <SymbolView name={name} size={23} tintColor={color} />
+const TabIcon = ({ name, fallback, color }: { name: SymbolViewProps['name']; fallback: string; color: ColorValue }) => (
+  <SymbolView
+    name={name}
+    size={23}
+    tintColor={color}
+    fallback={<Text style={[styles.fallbackIcon, { color }]}>{fallback}</Text>}
+  />
 );
 
 export default function ProtectedTabsLayout() {
@@ -28,7 +33,7 @@ export default function ProtectedTabsLayout() {
         options={{
           title: 'Tổng quan',
           tabBarIcon: ({ color }) => (
-            <TabIcon color={color} name={{ ios: 'house.fill', android: 'home', web: 'home' }} />
+            <TabIcon color={color} name="house.fill" fallback="⌂" />
           ),
         }}
       />
@@ -40,7 +45,8 @@ export default function ProtectedTabsLayout() {
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
-              name={{ ios: 'car.fill', android: 'directions_car', web: 'directions_car' }}
+              name="car.fill"
+              fallback="●"
             />
           ),
         }}
@@ -52,7 +58,8 @@ export default function ProtectedTabsLayout() {
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
-              name={{ ios: 'calendar', android: 'calendar_month', web: 'calendar_month' }}
+              name="calendar"
+              fallback="▦"
             />
           ),
         }}
@@ -64,7 +71,7 @@ export default function ProtectedTabsLayout() {
           href: user?.role === 'customer' ? undefined : null,
           title: 'Lịch sử',
           tabBarIcon: ({ color }) => (
-            <TabIcon color={color} name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} />
+            <TabIcon color={color} name="clock.arrow.circlepath" fallback="↻" />
           ),
         }}
       />
@@ -74,7 +81,7 @@ export default function ProtectedTabsLayout() {
           href: user?.role === 'customer' ? undefined : null,
           title: 'Thành viên',
           tabBarIcon: ({ color }) => (
-            <TabIcon color={color} name={{ ios: 'gift.fill', android: 'redeem', web: 'redeem' }} />
+            <TabIcon color={color} name="gift.fill" fallback="◇" />
           ),
         }}
       />
@@ -85,7 +92,8 @@ export default function ProtectedTabsLayout() {
           tabBarIcon: ({ color }) => (
             <TabIcon
               color={color}
-              name={{ ios: 'person.crop.circle.fill', android: 'person', web: 'person' }}
+              name="person.crop.circle.fill"
+              fallback="●"
             />
           ),
         }}
@@ -103,4 +111,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   label: { fontSize: 11, fontWeight: '700' },
+  fallbackIcon: { fontSize: 23, lineHeight: 25, fontWeight: '700' },
 });

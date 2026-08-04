@@ -2,8 +2,9 @@
 
 ## Kết nối API mobile
 
-App mặc định gọi `http://10.0.2.2:3000/api` trên Android emulator và
-`http://localhost:3000/api` trên iOS simulator/web.
+Khi chạy bằng Expo Go, app tự lấy IP LAN của máy đang chạy Metro để gọi API.
+Android emulator vẫn dùng `10.0.2.2`, còn web/iOS simulator dùng `localhost` khi
+không tìm thấy địa chỉ Metro.
 
 Khi chạy trên điện thoại thật, tạo `.env` từ `.env.example`, thay IP bằng địa chỉ LAN của máy chạy
 `shinecraft-server`, và bảo đảm hai thiết bị dùng cùng mạng Wi-Fi:

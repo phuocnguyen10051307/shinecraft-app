@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 import { tokenStorage } from '@/lib/storage';
@@ -24,7 +25,23 @@ import type {
   VehicleInput,
 } from '@/types';
 
-const fallbackHost = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+const getMetroHost = () => {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) return null;
+
+  try {
+    const url = new URL(hostUri.includes('://') ? hostUri : `http://${hostUri}`);
+    return url.hostname;
+  } catch {
+    return hostUri.split(':')[0] || null;
+  }
+};
+
+const metroHost = getMetroHost();
+const fallbackHost =
+  Platform.OS === 'web'
+    ? 'localhost'
+    : metroHost ?? (Platform.OS === 'android' ? '10.0.2.2' : 'localhost');
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? `http://${fallbackHost}:3000/api`;
 const REQUEST_TIMEOUT_MS = 10_000;
