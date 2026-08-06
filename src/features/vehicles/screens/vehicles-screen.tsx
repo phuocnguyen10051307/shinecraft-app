@@ -182,6 +182,16 @@ const openEdit = (vehicle: Vehicle) => {
               setDetailVehicle(null);
             }
           } catch (error) {
+            if (
+              error instanceof ApiError &&
+              (error.code === 'VEHICLE_ACTIVE_APPOINTMENT' || error.status === 409)
+            ) {
+              Alert.alert(
+                'Không thể xóa xe',
+                'Không thể xóa xe vì xe đang có lịch hẹn chờ xác nhận hoặc đang được thực hiện.',
+              );
+              return;
+            }
             await handleError(error, 'Không thể xóa xe');
           }
         },
