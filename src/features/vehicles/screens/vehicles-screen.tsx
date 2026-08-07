@@ -13,7 +13,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/constants/shinecraft-theme';
 import { getApiErrorMessage, useAuth } from '@/contexts/auth-context';
 import { ApiError, vehicleAccessRequestsApi, vehiclesApi } from '@/lib/api';
-import type { Vehicle, VehicleAccessRequest, VehicleInput } from '@/types';
+import type {
+  Vehicle,
+  VehicleAccessRequest,
+  VehicleAccessRequestInput,
+  VehicleInput,
+} from '@/types';
 
 import { VehicleDetailModal } from '../components/vehicle-detail-modal';
 import { SummaryCard, StatusBadge } from '../components/vehicle-primitives';
@@ -199,14 +204,17 @@ const openEdit = (vehicle: Vehicle) => {
     ]);
   };
 
-  const submitVerification = async (payload: { relationship: string; note: string }) => {
+  const submitVerification = async (payload: {
+    relationship: string;
+    documents: NonNullable<VehicleAccessRequestInput['documents']>;
+  }) => {
     if (!verificationPlate) return;
     setRequestSaving(true);
     try {
       const created = await vehicleAccessRequestsApi.create({
         licensePlate: verificationPlate,
         relationship: payload.relationship,
-        note: payload.note,
+        documents: payload.documents,
       });
       setAccessRequests((current) => [created, ...current]);
       setVerificationPlate(null);
