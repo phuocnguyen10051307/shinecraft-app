@@ -71,6 +71,7 @@ export interface VehicleAccessRequestInput {
     uri: string;
     name: string;
     type: string;
+    file?: Blob;
   }[];
 }
 

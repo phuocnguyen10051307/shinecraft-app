@@ -132,11 +132,16 @@ const toVehicleAccessRequestFormData = (input: VehicleAccessRequestInput) => {
   data.append('relationship', input.relationship.trim());
   if (input.note?.trim()) data.append('note', input.note.trim());
   input.documents?.forEach((document, index) => {
-    data.append('documents', {
-      uri: document.uri,
-      name: document.name || `document-${index + 1}`,
-      type: document.type || 'application/octet-stream',
-    } as never);
+    const name = document.name || `document-${index + 1}`;
+    if (document.file) {
+      data.append('documents', document.file, name);
+    } else {
+      data.append('documents', {
+        uri: document.uri,
+        name,
+        type: document.type || 'application/octet-stream',
+      } as never);
+    }
   });
   return data;
 };
@@ -205,6 +210,7 @@ export const vehicleAccessRequestsApi = {
       await request<VehicleAccessRequest>('/vehicle-access-requests', {
         method: 'POST',
         body: toVehicleAccessRequestFormData(input),
+        timeoutMs: UPLOAD_REQUEST_TIMEOUT_MS,
       })
     ).data,
   listMine: async () => (await request<VehicleAccessRequest[]>('/vehicle-access-requests/me')).data,
