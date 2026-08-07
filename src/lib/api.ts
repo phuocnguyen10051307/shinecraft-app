@@ -44,6 +44,7 @@ const fallbackHost =
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? `http://${fallbackHost}:3000/api`;
 const REQUEST_TIMEOUT_MS = 10_000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 120_000;
 
 interface ApiEnvelope<T> {
   data: T;
@@ -62,20 +63,24 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = RequestInit & { token?: string | null };
+type RequestOptions = RequestInit & {
+  token?: string | null;
+  timeoutMs?: number;
+};
 
 async function request<T>(path: string, options: RequestOptions = {}) {
-  const token = options.token === undefined ? await tokenStorage.get() : options.token;
-  const headers = new Headers(options.headers);
+  const { token: tokenOption, timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  const token = tokenOption === undefined ? await tokenStorage.get() : tokenOption;
+  const headers = new Headers(fetchOptions.headers);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  if (!(fetchOptions.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
   try {
     const response = await fetch(`${API_URL}${path}`, {
-      ...options,
+      ...fetchOptions,
       credentials: 'include',
       headers,
       signal: controller.signal,
@@ -176,12 +181,19 @@ export const vehiclesApi = {
       await request<Vehicle[]>(role === 'customer' ? '/vehicles/me?limit=100' : '/vehicles?limit=100')
     ).data,
   create: async (input: VehicleInput) =>
-    (await request<Vehicle>('/vehicles', { method: 'POST', body: toVehicleFormData(input) })).data,
+    (
+      await request<Vehicle>('/vehicles', {
+        method: 'POST',
+        body: toVehicleFormData(input),
+        timeoutMs: UPLOAD_REQUEST_TIMEOUT_MS,
+      })
+    ).data,
   update: async (id: string, input: VehicleInput) =>
     (
       await request<Vehicle>(`/vehicles/${id}`, {
         method: 'PATCH',
         body: toVehicleFormData(input),
+        timeoutMs: UPLOAD_REQUEST_TIMEOUT_MS,
       })
     ).data,
   remove: async (id: string) => request(`/vehicles/${id}`, { method: 'DELETE' }),
